@@ -3,6 +3,10 @@ from __future__ import annotations
 from datetime import date
 from typing import Iterable, Optional
 
+from sqlalchemy import inspect
+from sqlalchemy.orm import selectinload
+
+from .database import SessionLocal
 from .models import ActivityRecord, Profile
 
 
@@ -41,16 +45,38 @@ def _age_years(profile: Profile) -> float:
 
 
 def _latest_measurement(profile: Profile) -> dict:
-    measurement = None
-    for item in profile.measurements:
-        if measurement is None or item.date > measurement.date:
-            measurement = item
+    measurement = max(profile.measurements, key=lambda item: item.date, default=None)
     if measurement is None:
         return {"height_cm": profile.height_cm, "weight_kg": profile.weight_kg}
     return {
         "height_cm": measurement.height_cm or profile.height_cm,
         "weight_kg": measurement.weight_kg or profile.weight_kg,
     }
+
+
+def _reload_detached_profile(profile: Profile) -> Profile:
+    state = inspect(profile)
+    if not state.detached:
+        return profile
+
+    profile_id = state.identity[0] if state.identity else None
+    if profile_id is None:
+        raise ValueError("Cannot calculate requirements for a detached profile without an identity.")
+
+    session = SessionLocal()
+    try:
+        loaded_profile = (
+            session.query(Profile)
+            .options(selectinload(Profile.measurements))
+            .filter(Profile.id == profile_id)
+            .one_or_none()
+        )
+        if loaded_profile is None:
+            raise ValueError(f"Profile {profile_id} no longer exists.")
+        session.expunge(loaded_profile)
+        return loaded_profile
+    finally:
+        session.close()
 
 
 def _stage_name(profile: Profile) -> str:
@@ -144,6 +170,7 @@ def _daily_exercise_adjustment(profile: Profile, activities: Optional[Iterable[A
 
 def calculate_daily_requirements(profile: Profile, activities: Optional[Iterable[ActivityRecord]] = None) -> dict:
     """Generate a modular daily nutrition estimate from available profile data."""
+    profile = _reload_detached_profile(profile)
     measurements = _latest_measurement(profile)
     weight_kg = _effective_weight(profile, measurements)
     height_cm = _effective_height(profile, measurements)

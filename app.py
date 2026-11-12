@@ -73,66 +73,168 @@ def render_household_tab(session):
 
 def render_profiles_tab(session):
     profiles = session.query(Profile).order_by(Profile.id).all()
-    st.subheader("Profiles")
-    with st.form("profile_form"):
-        name = st.text_input("Name")
-        birth_date = st.date_input("Date of birth", value=date(2000, 1, 1))
-        stage = st.selectbox("Developmental stage", ["baby", "child", "adolescent", "adult", "older adult"])
-        sex = st.selectbox("Sex-related nutritional reference", ["female", "male", "unspecified"])
-        height_cm = st.number_input("Height (cm)", min_value=0.0, value=165.0, step=1.0)
-        weight_kg = st.number_input("Weight (kg)", min_value=0.0, value=60.0, step=0.5)
-        activity = st.selectbox("Activity baseline", ["sedentary", "light", "moderate", "active", "very_active"])
-        submitted = st.form_submit_button("Add profile")
-        if submitted and name:
-            save_profile(
-                session,
-                name=name,
-                household_id=get_or_create_household(session).id,
-                date_of_birth=birth_date,
-                developmental_stage=stage,
-                sex_reference=sex,
-                height_cm=float(height_cm),
-                weight_kg=float(weight_kg),
-                activity_baseline=activity,
-                sport_preferences="[]",
-                allergies="[]",
-                intolerances="[]",
-                disliked_ingredients="[]",
-                dietary_preferences="[]",
-                medical_considerations="[]",
-                custom_diet="[]",
-                usenote="",
-            )
-            st.success(f"Added profile: {name}")
+    st.subheader("Profile management")
 
-    if profiles:
-        for profile in profiles:
-            with st.expander(f"{profile.name} ({profile.developmental_stage})"):
-                st.write(f"Age: {round((date.today() - profile.date_of_birth).days / 365.25, 1)} years" if profile.date_of_birth else "Age not specified")
-                st.write(f"Activity baseline: {profile.activity_baseline}")
-                st.write(f"Allergies: {', '.join(parse_list_field(profile.allergies)) or 'None'}")
-                st.write(f"Dislikes: {', '.join(parse_list_field(profile.disliked_ingredients)) or 'None'}")
-                with st.form(f"edit_profile_{profile.id}"):
-                    new_name = st.text_input("Name", value=profile.name, key=f"name_{profile.id}")
-                    new_stage = st.selectbox("Developmental stage", ["baby", "child", "adolescent", "adult", "older adult"], index=["baby", "child", "adolescent", "adult", "older adult"].index(profile.developmental_stage), key=f"stage_{profile.id}")
-                    new_sex = st.selectbox("Sex-related nutritional reference", ["female", "male", "unspecified"], index=["female", "male", "unspecified"].index(profile.sex_reference), key=f"sex_{profile.id}")
-                    new_height = st.number_input("Height (cm)", value=float(profile.height_cm or 165), min_value=0.0, key=f"height_{profile.id}")
-                    new_weight = st.number_input("Weight (kg)", value=float(profile.weight_kg or 60), min_value=0.0, key=f"weight_{profile.id}")
-                    new_activity = st.selectbox("Activity baseline", ["sedentary", "light", "moderate", "active", "very_active"], index=["sedentary", "light", "moderate", "active", "very_active"].index(profile.activity_baseline), key=f"activity_{profile.id}")
-                    new_allergies = st.text_input("Allergies (comma separated)", value=", ".join(parse_list_field(profile.allergies)), key=f"allergies_{profile.id}")
-                    new_dislikes = st.text_input("Dislikes", value=", ".join(parse_list_field(profile.disliked_ingredients)), key=f"dislikes_{profile.id}")
-                    save = st.form_submit_button("Update profile")
-                    if save:
-                        profile.name = new_name
-                        profile.developmental_stage = new_stage
-                        profile.sex_reference = new_sex
-                        profile.height_cm = float(new_height)
-                        profile.weight_kg = float(new_weight)
-                        profile.activity_baseline = new_activity
-                        profile.allergies = json.dumps([item.strip() for item in new_allergies.split(",") if item.strip()])
-                        profile.disliked_ingredients = json.dumps([item.strip() for item in new_dislikes.split(",") if item.strip()])
-                        session.commit()
-                        st.success("Profile updated")
+    with st.expander("Add new profile", expanded=False):
+        with st.form("profile_form"):
+            name = st.text_input("Name")
+            birth_date = st.date_input("Date of birth", value=date(2000, 1, 1))
+            stage = st.selectbox("Developmental stage", ["baby", "child", "adolescent", "adult", "older adult"])
+            sex = st.selectbox("Sex-related nutritional reference", ["female", "male", "unspecified"])
+            col_a, col_b = st.columns(2)
+            with col_a:
+                height_cm = st.number_input("Height (cm)", min_value=0.0, value=165.0, step=1.0)
+                weight_kg = st.number_input("Weight (kg)", min_value=0.0, value=60.0, step=0.5)
+            with col_b:
+                activity = st.selectbox("Activity baseline", ["sedentary", "light", "moderate", "active", "very_active"])
+                sport_preferences = st.text_input("Sport preferences (comma separated)", value="walking, dancing")
+            allergies = st.text_input("Allergies (comma separated)", value="")
+            intolerances = st.text_input("Food intolerances (comma separated)", value="")
+            dislikes = st.text_input("Disliked ingredients (comma separated)", value="")
+            dietary_preferences = st.text_input("Dietary preferences (comma separated)", value="")
+            medical_considerations = st.text_input("Medical or nutritional considerations (comma separated)", value="")
+            notes = st.text_area("Notes", value="")
+
+            pregnancy_enabled = sex == "female" and st.checkbox("Pregnancy-related profile")
+            if pregnancy_enabled:
+                pregnancy_trimester = st.selectbox("Pregnancy trimester", [1, 2, 3], index=1)
+                pre_pregnancy_weight = st.number_input("Pre-pregnancy weight (kg)", min_value=0.0, value=60.0, step=0.5)
+                current_pregnancy_weight = st.number_input("Current pregnancy weight (kg)", min_value=0.0, value=62.0, step=0.5)
+                breastfeeding_enabled = st.checkbox("Breastfeeding")
+                if breastfeeding_enabled:
+                    exclusive_breastfeeding = st.checkbox("Exclusive breastfeeding")
+                    mixed_feeding = st.checkbox("Mixed feeding")
+                    breastfeeding_beyond_six_months = st.checkbox("Breastfeeding beyond 6 months")
+                else:
+                    exclusive_breastfeeding = False
+                    mixed_feeding = False
+                    breastfeeding_beyond_six_months = False
+            else:
+                pregnancy_trimester = None
+                pre_pregnancy_weight = None
+                current_pregnancy_weight = None
+                breastfeeding_enabled = False
+                exclusive_breastfeeding = False
+                mixed_feeding = False
+                breastfeeding_beyond_six_months = False
+
+            submitted = st.form_submit_button("Add profile")
+            if submitted and name:
+                save_profile(
+                    session,
+                    name=name,
+                    household_id=get_or_create_household(session).id,
+                    date_of_birth=birth_date,
+                    developmental_stage=stage,
+                    sex_reference=sex,
+                    height_cm=float(height_cm),
+                    weight_kg=float(weight_kg),
+                    activity_baseline=activity,
+                    sport_preferences=json.dumps([item.strip() for item in sport_preferences.split(",") if item.strip()]),
+                    allergies=json.dumps([item.strip() for item in allergies.split(",") if item.strip()]),
+                    intolerances=json.dumps([item.strip() for item in intolerances.split(",") if item.strip()]),
+                    disliked_ingredients=json.dumps([item.strip() for item in dislikes.split(",") if item.strip()]),
+                    dietary_preferences=json.dumps([item.strip() for item in dietary_preferences.split(",") if item.strip()]),
+                    medical_considerations=json.dumps([item.strip() for item in medical_considerations.split(",") if item.strip()]),
+                    custom_diet="[]",
+                    pregnancy_status=pregnancy_enabled,
+                    pregnancy_trimester=pregnancy_trimester if pregnancy_enabled else None,
+                    pre_pregnancy_weight_kg=float(pre_pregnancy_weight) if pregnancy_enabled else None,
+                    current_pregnancy_weight_kg=float(current_pregnancy_weight) if pregnancy_enabled else None,
+                    breastfeeding_status=breastfeeding_enabled,
+                    exclusive_breastfeeding=exclusive_breastfeeding,
+                    mixed_feeding=mixed_feeding,
+                    breastfeeding_beyond_six_months=breastfeeding_beyond_six_months,
+                    usenote=notes,
+                )
+                st.success(f"Added profile: {name}")
+
+    if not profiles:
+        st.info("No profiles have been added yet.")
+        return
+
+    profile_ids = [profile.id for profile in profiles]
+    last_selected = st.session_state.get("selected_profile_id")
+    selected_id = last_selected if last_selected in profile_ids else profiles[0].id
+    selected_profile = next(profile for profile in profiles if profile.id == selected_id)
+
+    st.markdown("### Profile overview")
+    cards = st.columns(min(3, len(profiles)))
+    for index, profile in enumerate(profiles):
+        with cards[index % len(cards)]:
+            st.markdown(f"### {profile.name}")
+            st.caption(f"{profile.developmental_stage or 'adult'} • {profile.sex_reference or 'unspecified'}")
+            st.write(f"Age: {round((date.today() - profile.date_of_birth).days / 365.25, 1)} years" if profile.date_of_birth else "Age not specified")
+            st.write(f"Height/Weight: {profile.height_cm or '-'} cm / {profile.weight_kg or '-'} kg")
+            if st.button("Select", key=f"select_{profile.id}", use_container_width=True):
+                st.session_state["selected_profile_id"] = profile.id
+                selected_profile = profile
+
+    st.markdown(f"### Editing: {selected_profile.name}")
+    with st.form(f"edit_profile_{selected_profile.id}"):
+        new_name = st.text_input("Name", value=selected_profile.name, key=f"name_{selected_profile.id}")
+        new_stage = st.selectbox("Developmental stage", ["baby", "child", "adolescent", "adult", "older adult"], index=["baby", "child", "adolescent", "adult", "older adult"].index(selected_profile.developmental_stage or "adult"), key=f"stage_{selected_profile.id}")
+        new_sex = st.selectbox("Sex-related nutritional reference", ["female", "male", "unspecified"], index=["female", "male", "unspecified"].index(selected_profile.sex_reference or "unspecified"), key=f"sex_{selected_profile.id}")
+
+        field_col_a, field_col_b = st.columns(2)
+        with field_col_a:
+            new_height = st.number_input("Height (cm)", value=float(selected_profile.height_cm or 165), min_value=0.0, key=f"height_{selected_profile.id}")
+            new_weight = st.number_input("Weight (kg)", value=float(selected_profile.weight_kg or 60), min_value=0.0, key=f"weight_{selected_profile.id}")
+            new_activity = st.selectbox("Activity baseline", ["sedentary", "light", "moderate", "active", "very_active"], index=["sedentary", "light", "moderate", "active", "very_active"].index(selected_profile.activity_baseline or "moderate"), key=f"activity_{selected_profile.id}")
+            new_sports = st.text_input("Sport preferences", value=", ".join(parse_list_field(selected_profile.sport_preferences)), key=f"sports_{selected_profile.id}")
+        with field_col_b:
+            new_allergies = st.text_input("Allergies (comma separated)", value=", ".join(parse_list_field(selected_profile.allergies)), key=f"allergies_{selected_profile.id}")
+            new_intolerances = st.text_input("Intolerances", value=", ".join(parse_list_field(selected_profile.intolerances)), key=f"intolerances_{selected_profile.id}")
+            new_dislikes = st.text_input("Dislikes", value=", ".join(parse_list_field(selected_profile.disliked_ingredients)), key=f"dislikes_{selected_profile.id}")
+            new_preferences = st.text_input("Dietary preferences", value=", ".join(parse_list_field(selected_profile.dietary_preferences)), key=f"preferences_{selected_profile.id}")
+            new_medical = st.text_input("Medical considerations", value=", ".join(parse_list_field(selected_profile.medical_considerations)), key=f"medical_{selected_profile.id}")
+
+        pregnancy_value = st.checkbox("Pregnancy-related profile", value=bool(selected_profile.pregnancy_status), key=f"preg_{selected_profile.id}")
+        if pregnancy_value or selected_profile.pregnancy_status:
+            pregnancy_trimester = st.selectbox("Pregnancy trimester", [1, 2, 3], index=(selected_profile.pregnancy_trimester or 2) - 1, key=f"trimester_{selected_profile.id}")
+            pre_preg_weight = st.number_input("Pre-pregnancy weight (kg)", value=float(selected_profile.pre_pregnancy_weight_kg or (selected_profile.weight_kg or 60)), min_value=0.0, key=f"prepreg_{selected_profile.id}")
+            current_preg_weight = st.number_input("Current pregnancy weight (kg)", value=float(selected_profile.current_pregnancy_weight_kg or (selected_profile.weight_kg or 60)), min_value=0.0, key=f"currentpreg_{selected_profile.id}")
+        else:
+            pregnancy_trimester = None
+            pre_preg_weight = None
+            current_preg_weight = None
+
+        breastfeeding_value = st.checkbox("Breastfeeding", value=bool(selected_profile.breastfeeding_status), key=f"breastfeeding_{selected_profile.id}")
+        if breastfeeding_value:
+            exclusive = st.checkbox("Exclusive breastfeeding", value=bool(selected_profile.exclusive_breastfeeding), key=f"exclusive_{selected_profile.id}")
+            mixed = st.checkbox("Mixed feeding", value=bool(selected_profile.mixed_feeding), key=f"mixed_{selected_profile.id}")
+            beyond = st.checkbox("Breastfeeding beyond 6 months", value=bool(selected_profile.breastfeeding_beyond_six_months), key=f"beyond_{selected_profile.id}")
+        else:
+            exclusive = False
+            mixed = False
+            beyond = False
+
+        new_notes = st.text_area("Notes", value=selected_profile.usenote or "", key=f"notes_{selected_profile.id}")
+        save = st.form_submit_button("Update profile")
+        if save:
+            selected_profile.name = new_name
+            selected_profile.developmental_stage = new_stage
+            selected_profile.sex_reference = new_sex
+            selected_profile.height_cm = float(new_height)
+            selected_profile.weight_kg = float(new_weight)
+            selected_profile.activity_baseline = new_activity
+            selected_profile.sport_preferences = json.dumps([item.strip() for item in new_sports.split(",") if item.strip()])
+            selected_profile.allergies = json.dumps([item.strip() for item in new_allergies.split(",") if item.strip()])
+            selected_profile.intolerances = json.dumps([item.strip() for item in new_intolerances.split(",") if item.strip()])
+            selected_profile.disliked_ingredients = json.dumps([item.strip() for item in new_dislikes.split(",") if item.strip()])
+            selected_profile.dietary_preferences = json.dumps([item.strip() for item in new_preferences.split(",") if item.strip()])
+            selected_profile.medical_considerations = json.dumps([item.strip() for item in new_medical.split(",") if item.strip()])
+            selected_profile.pregnancy_status = bool(pregnancy_value)
+            selected_profile.pregnancy_trimester = pregnancy_trimester if pregnancy_value else None
+            selected_profile.pre_pregnancy_weight_kg = float(pre_preg_weight) if pregnancy_value and pre_preg_weight is not None else None
+            selected_profile.current_pregnancy_weight_kg = float(current_preg_weight) if pregnancy_value and current_preg_weight is not None else None
+            selected_profile.breastfeeding_status = bool(breastfeeding_value)
+            selected_profile.exclusive_breastfeeding = bool(exclusive)
+            selected_profile.mixed_feeding = bool(mixed)
+            selected_profile.breastfeeding_beyond_six_months = bool(beyond)
+            selected_profile.usenote = new_notes
+            session.commit()
+            st.success("Profile updated")
 
 
 def render_measurements_tab(session):
@@ -263,15 +365,45 @@ def render_dashboard_tab(session):
     activities = session.query(ActivityRecord).filter(ActivityRecord.profile_id == selected.id).all()
     requirements = calculate_daily_requirements(selected, activities)
     rows = list_requirement_rows(selected, activities)
-    st.subheader(f"Daily nutrition requirements for {selected.name}")
-    st.write(requirements["method"])
-    st.write(requirements["reference_source"])
-    st.dataframe(pd.DataFrame(rows))
+
+    st.subheader(f"Daily nutritional overview for {selected.name}")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Energy", f"{requirements['energy_kcal']} kcal")
+    with col2:
+        st.metric("Protein", f"{requirements['protein_g']} g")
+    with col3:
+        st.metric("Fiber", f"{requirements['fiber_g']} g")
+    with col4:
+        st.metric("Hydration", f"{requirements['hydration_liters']} L")
+
+    st.caption(requirements["method"])
+    st.caption(requirements["reference_source"])
+
+    if requirements.get("notes"):
+        st.markdown("### Guidance")
+        for bullet in requirements["notes"]:
+            st.write(f"- {bullet}")
 
     chart_data = pd.DataFrame(rows)
     if not chart_data.empty:
-        chart_data = chart_data[chart_data["metric"].isin(["Energy Kcal", "Protein G", "Carbohydrates G", "Fiber G"])].copy()
+        chart_data = chart_data[chart_data["metric"].isin(["Energy Kcal", "Protein G", "Carbohydrates G", "Fiber G", "Iron Mg"])].copy()
+        st.markdown("### Key nutrients")
         st.bar_chart(chart_data.set_index("metric")["value"])
+
+    st.markdown("### Full requirement list")
+    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+    if requirements.get("adjustments"):
+        adjustments = requirements["adjustments"]
+        st.markdown("### Context")
+        st.write({
+            "baseline activity factor": adjustments.get("baseline_activity_factor"),
+            "exercise minutes": adjustments.get("exercise_minutes"),
+            "exercise energy top-up": adjustments.get("exercise_top_up_kcal"),
+            "pregnancy status": adjustments.get("pregnancy_status"),
+            "breastfeeding status": adjustments.get("breastfeeding_status"),
+        })
 
 
 def main():
