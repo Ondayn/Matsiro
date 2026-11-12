@@ -1,0 +1,19 @@
+[project]
+name = "Matsiro"
+version = "0.1.0"
+description = "Offline-first family nutrition planning application"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "streamlit>=1.36.0",
+  "SQLAlchemy>=2.0.30",
+  "pandas>=2.2.2",
+  "matplotlib>=3.8.4",
+  "reportlab>=4.2.0",
+  "openpyxl>=3.1.5",
+  "pydantic>=2.7.4",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
