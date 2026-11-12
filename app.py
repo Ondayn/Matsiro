@@ -35,42 +35,38 @@ def apply_theme():
         f"""
         <style>
         :root {{
-          --matsiro-bg: var(--background-color, #fff8e9);
-          --matsiro-surface: color-mix(in srgb, var(--secondary-background-color, #fffdf6) 82%, #123a2d 18%);
-          --matsiro-surface-alt: color-mix(in srgb, var(--secondary-background-color, #fffdf6) 78%, #173d68 22%);
+          --matsiro-bg: var(--background-color, #f5f7f2);
+          --matsiro-surface: var(--secondary-background-color, #ffffff);
+          --matsiro-surface-alt: color-mix(in srgb, var(--primary-color, #176445) 9%, var(--matsiro-surface));
           --matsiro-text: var(--text-color, #193b2d);
-          --matsiro-muted: color-mix(in srgb, var(--text-color, #193b2d) 68%, var(--background-color, #fff8e9));
-          --matsiro-primary: color-mix(in srgb, var(--primary-color, #176445) 58%, var(--text-color, #193b2d));
-          --matsiro-accent: #f07845;
-          --matsiro-secondary: #287da0;
-          --matsiro-border: color-mix(in srgb, var(--text-color, #193b2d) 15%, var(--background-color, #fff8e9));
-          --matsiro-orb-green: rgba(32, 113, 70, .29);
-          --matsiro-orb-orange: rgba(242, 120, 63, .22);
-          --matsiro-orb-blue: rgba(31, 72, 143, .19);
+          --matsiro-muted: color-mix(in srgb, var(--matsiro-text) 62%, var(--matsiro-bg));
+          --matsiro-primary: var(--primary-color, #176445);
+          --matsiro-accent: #e8794f;
+          --matsiro-border: color-mix(in srgb, var(--matsiro-text) 13%, var(--matsiro-bg));
         }}
         .stApp {{
-          background:
-            radial-gradient(ellipse 72rem 42rem at 104% -8%, var(--matsiro-orb-green) 0%, transparent 68%),
-            radial-gradient(ellipse 58rem 38rem at -10% 18%, var(--matsiro-orb-orange) 0%, transparent 70%),
-            radial-gradient(ellipse 62rem 40rem at 48% 112%, var(--matsiro-orb-blue) 0%, transparent 72%),
-            linear-gradient(138deg, var(--matsiro-bg) 5%, color-mix(in srgb, var(--matsiro-bg) 86%, #d7e8c9) 52%, var(--matsiro-bg) 100%);
+          background: var(--matsiro-bg);
           color: var(--matsiro-text);
         }}
-        [data-testid="stAppViewContainer"] {{ background: transparent; color: var(--matsiro-text); }}
+        [data-testid="stAppViewContainer"] {{ color: var(--matsiro-text); }}
+        [data-testid="stMainBlockContainer"] {{
+          max-width: 1440px;
+          padding-top: 2rem;
+          padding-bottom: 4rem;
+        }}
         [data-testid="stSidebar"] {{
-          background:
-            linear-gradient(160deg, var(--matsiro-surface), color-mix(in srgb, var(--matsiro-surface) 85%, var(--matsiro-primary)));
+          background: color-mix(in srgb, var(--matsiro-primary) 5%, var(--matsiro-bg));
           border-right: 1px solid var(--matsiro-border);
         }}
         [data-testid="stHeader"] {{ background: transparent; }}
         h1, h2, h3 {{
           color: var(--matsiro-text);
-          font-family: Georgia, "Times New Roman", serif;
-          font-weight: 800;
-          letter-spacing: -.035em;
+          font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+          font-weight: 750;
+          letter-spacing: -.04em;
         }}
-        h1 {{ font-size: clamp(2.4rem, 5vw, 4rem); }}
-        h2, h3 {{ letter-spacing: -.02em; }}
+        h1 {{ font-size: clamp(2rem, 4vw, 3rem); line-height: 1.08; }}
+        h2, h3 {{ letter-spacing: -.025em; }}
         p, label, [data-testid="stMarkdownContainer"] {{
           color: var(--matsiro-text);
           font-family: "Trebuchet MS", "Segoe UI", sans-serif;
@@ -79,8 +75,8 @@ def apply_theme():
         [data-testid="stMetric"] {{
           background: var(--matsiro-surface);
           border-color: var(--matsiro-border);
-          border-radius: 26px 20px 28px 18px;
-          padding: 1rem 1.15rem;
+          border-radius: 16px;
+          padding: 1rem 1.1rem;
         }}
         [data-testid="stMetricLabel"] p {{
           color: var(--matsiro-muted);
@@ -89,25 +85,30 @@ def apply_theme():
         [data-testid="stVerticalBlockBorderWrapper"] {{
           background: var(--matsiro-surface);
           border-color: var(--matsiro-border);
-          border-radius: 26px 20px 30px 18px;
+          border-radius: 16px;
         }}
         .stButton > button, .stDownloadButton > button {{
-          border-radius: 999px;
+          min-height: 2.6rem;
+          border-radius: 10px;
           border: 1px solid var(--matsiro-border);
           color: var(--matsiro-text);
           font-weight: 700;
-          transition: transform .16s ease, box-shadow .16s ease;
+          transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
         }}
         .stButton > button:hover, .stDownloadButton > button:hover {{
           border-color: var(--matsiro-primary);
-          box-shadow: 0 8px 26px var(--matsiro-orb-green);
+          box-shadow: 0 5px 16px color-mix(in srgb, var(--matsiro-primary) 14%, transparent);
           transform: translateY(-1px);
         }}
         .stButton > button[kind="primary"] {{
-          background: linear-gradient(115deg, var(--matsiro-primary), var(--matsiro-secondary));
+          background: var(--matsiro-primary);
           border-color: var(--matsiro-primary);
-          color: var(--matsiro-bg);
+          color: #ffffff;
           font-weight: 800;
+        }}
+        .stButton > button:focus-visible, .stDownloadButton > button:focus-visible {{
+          outline: 3px solid color-mix(in srgb, var(--matsiro-primary) 50%, transparent);
+          outline-offset: 2px;
         }}
         [data-testid="stTextInput"] input,
         [data-testid="stTextArea"] textarea,
@@ -117,7 +118,7 @@ def apply_theme():
           background: var(--matsiro-surface);
           color: var(--matsiro-text);
           border-color: var(--matsiro-border);
-          border-radius: 14px;
+          border-radius: 10px;
         }}
         [data-testid="stTabs"] button[aria-selected="true"] {{
           color: var(--matsiro-primary);
@@ -126,17 +127,16 @@ def apply_theme():
         }}
         [data-testid="stDataFrame"], [data-testid="stTable"] {{
           border: 1px solid var(--matsiro-border);
-          border-radius: 20px;
+          border-radius: 12px;
           overflow: hidden;
         }}
         .member-avatar {{
-          width: 72px; height: 72px;
+          width: 72px; height: 72px; border-radius: 50%;
           display: flex; align-items: center; justify-content: center;
           margin: 0 auto 8px; font-size: 30px; font-weight: 800;
           color: #123626;
-          background: linear-gradient(135deg, #b8e4a8 4%, #ffd077 56%, #f28a62 100%);
-          border-radius: 43% 57% 62% 38% / 48% 42% 58% 52%;
-          box-shadow: 0 8px 24px var(--matsiro-orb-green);
+          background: color-mix(in srgb, var(--matsiro-primary) 16%, #ffffff);
+          border: 2px solid color-mix(in srgb, var(--matsiro-primary) 22%, #ffffff);
         }}
         [data-testid="stCheckbox"] label,
         [data-testid="stRadio"] label {{
@@ -153,7 +153,77 @@ def apply_theme():
           border-radius: 999px 999px 999px 8px;
           background: var(--matsiro-surface-alt);
         }}
+        .page-heading {{
+          margin: 0 0 1.75rem;
+          padding: 1.45rem 1.6rem 1.5rem;
+          border: 1px solid var(--matsiro-border);
+          border-left: 4px solid var(--matsiro-primary);
+          border-radius: 16px;
+          background: var(--matsiro-surface);
+        }}
+        .page-heading .eyebrow {{
+          display: block;
+          margin-bottom: .45rem;
+          padding: 0;
+          border-radius: 0;
+          background: transparent;
+          font-size: .72rem;
+          letter-spacing: .11em;
+        }}
+        .page-heading h1 {{
+          margin: 0;
+          font-size: clamp(1.9rem, 3.5vw, 2.7rem);
+        }}
+        .page-heading p {{
+          max-width: 64ch;
+          margin: .55rem 0 0;
+          color: var(--matsiro-muted);
+          font-size: 1rem;
+          line-height: 1.55;
+        }}
+        .brand-lockup {{
+          display: flex;
+          align-items: center;
+          gap: .7rem;
+          margin: .4rem 0 .25rem;
+          color: var(--matsiro-text);
+          font-size: 1.25rem;
+          font-weight: 800;
+          letter-spacing: -.03em;
+        }}
+        .brand-lockup .brand-icon {{
+          display: grid;
+          width: 2.35rem;
+          height: 2.35rem;
+          place-items: center;
+          border-radius: 10px;
+          background: var(--matsiro-primary);
+          color: #fff;
+          font-size: 1.25rem;
+        }}
+        @media (max-width: 640px) {{
+          [data-testid="stMainBlockContainer"] {{
+            padding: 1.25rem 1rem 3rem;
+          }}
+          .page-heading {{
+            padding: 1.15rem 1.1rem;
+            margin-bottom: 1.25rem;
+          }}
+        }}
         </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_page_header(eyebrow, title, description):
+    st.markdown(
+        f"""
+        <header class="page-heading">
+          <span class="eyebrow">{escape(eyebrow)}</span>
+          <h1>{escape(title)}</h1>
+          <p>{escape(description)}</p>
+        </header>
         """,
         unsafe_allow_html=True,
     )
@@ -616,8 +686,11 @@ def _render_exercise(session, profile):
 
 
 def render_household_page(session, profiles):
-    st.markdown('<div class="eyebrow">Your family</div>', unsafe_allow_html=True)
-    st.title("Household")
+    _render_page_header(
+        "Your family",
+        "Household",
+        "Keep family profiles, food needs, and activity details together.",
+    )
     _render_household_name(session)
 
     household = session.query(Household).first()
@@ -961,8 +1034,11 @@ def _render_meal_slot(session, profile, participants, ingredients, plan_date, me
 
 
 def render_plan_page(session, profiles):
-    st.markdown('<div class="eyebrow">Make family meals easier</div>', unsafe_allow_html=True)
-    st.title("Your meal plan")
+    _render_page_header(
+        "Make family meals easier",
+        "Meal planner",
+        "Choose a day and who is eating, then build meals around the household's needs.",
+    )
     if not profiles:
         st.info("Add a household member first, then come back to build a meal plan.")
         return
@@ -1047,8 +1123,11 @@ def render_plan_page(session, profiles):
 
 
 def render_food_library(session):
-    st.markdown('<div class="eyebrow">Your local food catalog</div>', unsafe_allow_html=True)
-    st.title("Food library")
+    _render_page_header(
+        "Your local food catalog",
+        "Food library",
+        "Manage the ingredients used to create safe, flexible meal suggestions.",
+    )
     search = st.text_input("Search ingredients", placeholder="Search by name or category")
     with st.expander("＋ Add an ingredient", expanded=False):
         name = st.text_input("Ingredient name", key="ingredient_name")
@@ -1115,8 +1194,11 @@ def render_food_library(session):
 
 
 def render_insights_page(session, profiles):
-    st.markdown('<div class="eyebrow">Nutrition and activity, at a glance</div>', unsafe_allow_html=True)
-    st.title("Insights")
+    _render_page_header(
+        "Nutrition and activity",
+        "Insights",
+        "Review estimated nutrition targets and the activity your household has logged.",
+    )
     if not profiles:
         st.info("Add a household member to see personalized insights.")
         return
@@ -1214,8 +1296,12 @@ def main():
         profiles = session.query(Profile).order_by(Profile.id).all()
 
         with st.sidebar:
-            st.markdown("## 🥗 Matsiro")
+            st.markdown(
+                '<div class="brand-lockup"><span class="brand-icon">🥗</span><span>Matsiro</span></div>',
+                unsafe_allow_html=True,
+            )
             st.caption("Family food, made simpler")
+            st.markdown("**Workspace**")
             page = st.radio(
                 "Navigate",
                 ["Plan", "Household", "Food library", "Insights"],
@@ -1223,8 +1309,8 @@ def main():
                 key="navigation",
             )
             st.divider()
-            st.caption("Use Streamlit’s top-right menu to switch light and dark themes.")
-            st.caption("Your household data stays on this device.")
+            st.caption("Private by design")
+            st.caption("Household data stays on this device.")
 
         if page == "Plan":
             render_plan_page(session, profiles)
