@@ -1,27 +1,162 @@
 import json
-from datetime import date
+from datetime import date, timedelta
+from html import escape
 
 import pandas as pd
 import streamlit as st
 
 from matsiro.database import SessionLocal, init_db
-from matsiro.models import ActivityRecord, Household, Ingredient, MeasurementRecord, Profile
+from matsiro.models import (
+    ActivityRecord,
+    Household,
+    Ingredient,
+    MealPlan,
+    MealPlanItem,
+    MeasurementRecord,
+    Profile,
+)
 from matsiro.nutrition_engine import calculate_daily_requirements, list_requirement_rows
-from matsiro.recommendation_engine import recommend_meal
+from matsiro.recommendation_engine import recommend_ingredient, recommend_meal
 from matsiro.seed_data import ensure_seed_data
 
 
 st.set_page_config(page_title="Matsiro", page_icon="🥗", layout="wide")
 
+MEAL_SLOTS = [
+    ("breakfast", "🌅", "Breakfast"),
+    ("lunch", "☀️", "Lunch"),
+    ("dinner", "🌙", "Dinner"),
+    ("snacks", "🍊", "Snacks"),
+]
 
-def get_or_create_household(session):
-    household = session.query(Household).first()
-    if household is None:
-        household = Household(name="Matsiro Family")
-        session.add(household)
-        session.commit()
-        session.refresh(household)
-    return household
+
+def apply_theme():
+    st.markdown(
+        f"""
+        <style>
+        :root {{
+          --matsiro-bg: var(--background-color, #fff8e9);
+          --matsiro-surface: color-mix(in srgb, var(--secondary-background-color, #fffdf6) 82%, #123a2d 18%);
+          --matsiro-surface-alt: color-mix(in srgb, var(--secondary-background-color, #fffdf6) 78%, #173d68 22%);
+          --matsiro-text: var(--text-color, #193b2d);
+          --matsiro-muted: color-mix(in srgb, var(--text-color, #193b2d) 68%, var(--background-color, #fff8e9));
+          --matsiro-primary: color-mix(in srgb, var(--primary-color, #176445) 58%, var(--text-color, #193b2d));
+          --matsiro-accent: #f07845;
+          --matsiro-secondary: #287da0;
+          --matsiro-border: color-mix(in srgb, var(--text-color, #193b2d) 15%, var(--background-color, #fff8e9));
+          --matsiro-orb-green: rgba(32, 113, 70, .29);
+          --matsiro-orb-orange: rgba(242, 120, 63, .22);
+          --matsiro-orb-blue: rgba(31, 72, 143, .19);
+        }}
+        .stApp {{
+          background:
+            radial-gradient(ellipse 72rem 42rem at 104% -8%, var(--matsiro-orb-green) 0%, transparent 68%),
+            radial-gradient(ellipse 58rem 38rem at -10% 18%, var(--matsiro-orb-orange) 0%, transparent 70%),
+            radial-gradient(ellipse 62rem 40rem at 48% 112%, var(--matsiro-orb-blue) 0%, transparent 72%),
+            linear-gradient(138deg, var(--matsiro-bg) 5%, color-mix(in srgb, var(--matsiro-bg) 86%, #d7e8c9) 52%, var(--matsiro-bg) 100%);
+          color: var(--matsiro-text);
+        }}
+        [data-testid="stAppViewContainer"] {{ background: transparent; color: var(--matsiro-text); }}
+        [data-testid="stSidebar"] {{
+          background:
+            linear-gradient(160deg, var(--matsiro-surface), color-mix(in srgb, var(--matsiro-surface) 85%, var(--matsiro-primary)));
+          border-right: 1px solid var(--matsiro-border);
+        }}
+        [data-testid="stHeader"] {{ background: transparent; }}
+        h1, h2, h3 {{
+          color: var(--matsiro-text);
+          font-family: Georgia, "Times New Roman", serif;
+          font-weight: 800;
+          letter-spacing: -.035em;
+        }}
+        h1 {{ font-size: clamp(2.4rem, 5vw, 4rem); }}
+        h2, h3 {{ letter-spacing: -.02em; }}
+        p, label, [data-testid="stMarkdownContainer"] {{
+          color: var(--matsiro-text);
+          font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+        }}
+        [data-testid="stCaptionContainer"], .stCaption {{ color: var(--matsiro-muted); }}
+        [data-testid="stMetric"] {{
+          background: var(--matsiro-surface);
+          border-color: var(--matsiro-border);
+          border-radius: 26px 20px 28px 18px;
+          padding: 1rem 1.15rem;
+        }}
+        [data-testid="stMetricLabel"] p {{
+          color: var(--matsiro-muted);
+          font-weight: 700;
+        }}
+        [data-testid="stVerticalBlockBorderWrapper"] {{
+          background: var(--matsiro-surface);
+          border-color: var(--matsiro-border);
+          border-radius: 26px 20px 30px 18px;
+        }}
+        .stButton > button, .stDownloadButton > button {{
+          border-radius: 999px;
+          border: 1px solid var(--matsiro-border);
+          color: var(--matsiro-text);
+          font-weight: 700;
+          transition: transform .16s ease, box-shadow .16s ease;
+        }}
+        .stButton > button:hover, .stDownloadButton > button:hover {{
+          border-color: var(--matsiro-primary);
+          box-shadow: 0 8px 26px var(--matsiro-orb-green);
+          transform: translateY(-1px);
+        }}
+        .stButton > button[kind="primary"] {{
+          background: linear-gradient(115deg, var(--matsiro-primary), var(--matsiro-secondary));
+          border-color: var(--matsiro-primary);
+          color: var(--matsiro-bg);
+          font-weight: 800;
+        }}
+        [data-testid="stTextInput"] input,
+        [data-testid="stTextArea"] textarea,
+        [data-testid="stNumberInput"] input,
+        [data-testid="stDateInput"] input,
+        [data-baseweb="select"] > div {{
+          background: var(--matsiro-surface);
+          color: var(--matsiro-text);
+          border-color: var(--matsiro-border);
+          border-radius: 14px;
+        }}
+        [data-testid="stTabs"] button[aria-selected="true"] {{
+          color: var(--matsiro-primary);
+          border-bottom-color: var(--matsiro-primary);
+          font-weight: 800;
+        }}
+        [data-testid="stDataFrame"], [data-testid="stTable"] {{
+          border: 1px solid var(--matsiro-border);
+          border-radius: 20px;
+          overflow: hidden;
+        }}
+        .member-avatar {{
+          width: 72px; height: 72px;
+          display: flex; align-items: center; justify-content: center;
+          margin: 0 auto 8px; font-size: 30px; font-weight: 800;
+          color: #123626;
+          background: linear-gradient(135deg, #b8e4a8 4%, #ffd077 56%, #f28a62 100%);
+          border-radius: 43% 57% 62% 38% / 48% 42% 58% 52%;
+          box-shadow: 0 8px 24px var(--matsiro-orb-green);
+        }}
+        [data-testid="stCheckbox"] label,
+        [data-testid="stRadio"] label {{
+          color: var(--matsiro-text);
+          font-weight: 700;
+        }}
+        [data-testid="stMarkdownContainer"] strong {{ color: var(--matsiro-text); }}
+        .eyebrow {{
+          display: inline-block;
+          color: var(--matsiro-primary); font-size: .76rem;
+          font-weight: 900; letter-spacing: .12em; text-transform: uppercase;
+          padding: .38rem .8rem;
+          margin-bottom: .4rem;
+          border-radius: 999px 999px 999px 8px;
+          background: var(--matsiro-surface-alt);
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def parse_list_field(raw_value):
@@ -29,408 +164,1078 @@ def parse_list_field(raw_value):
         return []
     if isinstance(raw_value, list):
         return raw_value
-    if isinstance(raw_value, str):
-        value = raw_value.strip()
-        if not value:
-            return []
-        if value.startswith("["):
-            try:
-                parsed = json.loads(value)
-                if isinstance(parsed, list):
-                    return parsed
-            except json.JSONDecodeError:
-                pass
-        return [item.strip() for item in value.split(",") if item.strip()]
-    return [str(raw_value)]
+    value = str(raw_value).strip()
+    if not value:
+        return []
+    if value.startswith("["):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def save_profile(session, profile_id=None, **payload):
-    if profile_id:
-        profile = session.query(Profile).get(profile_id)
-        if profile is None:
-            return None
-        for key, value in payload.items():
-            setattr(profile, key, value)
+def _csv_list(raw_value):
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
+def _avatar(profile, width=72):
+    if profile.avatar_data:
+        st.image(profile.avatar_data, width=width)
     else:
-        profile = Profile(**payload)
-        session.add(profile)
-    session.commit()
-    return profile
+        initial = escape((profile.name or "?")[:1].upper())
+        st.markdown(f'<div class="member-avatar">{initial}</div>', unsafe_allow_html=True)
 
 
-def render_household_tab(session):
-    household = get_or_create_household(session)
-    st.subheader("Household overview")
-    st.write(f"Household: {household.name}")
-    with st.form("household_form"):
-        name = st.text_input("Update household name", value=household.name)
-        submitted = st.form_submit_button("Save household")
-        if submitted:
-            household.name = name
-            session.commit()
-            st.success("Household saved")
+def _age_label(profile):
+    if not profile.date_of_birth:
+        return "Age not set"
+    years = max(0, (date.today() - profile.date_of_birth).days / 365.25)
+    return f"{years:.0f} years"
 
 
-def render_profiles_tab(session):
-    profiles = session.query(Profile).order_by(Profile.id).all()
-    st.subheader("Profile management")
-
-    with st.expander("Add new profile", expanded=False):
-        with st.form("profile_form"):
-            name = st.text_input("Name")
-            birth_date = st.date_input("Date of birth", value=date(2000, 1, 1))
-            stage = st.selectbox("Developmental stage", ["baby", "child", "adolescent", "adult", "older adult"])
-            sex = st.selectbox("Sex-related nutritional reference", ["female", "male", "unspecified"])
-            col_a, col_b = st.columns(2)
-            with col_a:
-                height_cm = st.number_input("Height (cm)", min_value=0.0, value=165.0, step=1.0)
-                weight_kg = st.number_input("Weight (kg)", min_value=0.0, value=60.0, step=0.5)
-            with col_b:
-                activity = st.selectbox("Activity baseline", ["sedentary", "light", "moderate", "active", "very_active"])
-                sport_preferences = st.text_input("Sport preferences (comma separated)", value="walking, dancing")
-            allergies = st.text_input("Allergies (comma separated)", value="")
-            intolerances = st.text_input("Food intolerances (comma separated)", value="")
-            dislikes = st.text_input("Disliked ingredients (comma separated)", value="")
-            dietary_preferences = st.text_input("Dietary preferences (comma separated)", value="")
-            medical_considerations = st.text_input("Medical or nutritional considerations (comma separated)", value="")
-            notes = st.text_area("Notes", value="")
-
-            pregnancy_enabled = sex == "female" and st.checkbox("Pregnancy-related profile")
-            if pregnancy_enabled:
-                pregnancy_trimester = st.selectbox("Pregnancy trimester", [1, 2, 3], index=1)
-                pre_pregnancy_weight = st.number_input("Pre-pregnancy weight (kg)", min_value=0.0, value=60.0, step=0.5)
-                current_pregnancy_weight = st.number_input("Current pregnancy weight (kg)", min_value=0.0, value=62.0, step=0.5)
-                breastfeeding_enabled = st.checkbox("Breastfeeding")
-                if breastfeeding_enabled:
-                    exclusive_breastfeeding = st.checkbox("Exclusive breastfeeding")
-                    mixed_feeding = st.checkbox("Mixed feeding")
-                    breastfeeding_beyond_six_months = st.checkbox("Breastfeeding beyond 6 months")
-                else:
-                    exclusive_breastfeeding = False
-                    mixed_feeding = False
-                    breastfeeding_beyond_six_months = False
-            else:
-                pregnancy_trimester = None
-                pre_pregnancy_weight = None
-                current_pregnancy_weight = None
-                breastfeeding_enabled = False
-                exclusive_breastfeeding = False
-                mixed_feeding = False
-                breastfeeding_beyond_six_months = False
-
-            submitted = st.form_submit_button("Add profile")
-            if submitted and name:
-                save_profile(
-                    session,
-                    name=name,
-                    household_id=get_or_create_household(session).id,
-                    date_of_birth=birth_date,
-                    developmental_stage=stage,
-                    sex_reference=sex,
-                    height_cm=float(height_cm),
-                    weight_kg=float(weight_kg),
-                    activity_baseline=activity,
-                    sport_preferences=json.dumps([item.strip() for item in sport_preferences.split(",") if item.strip()]),
-                    allergies=json.dumps([item.strip() for item in allergies.split(",") if item.strip()]),
-                    intolerances=json.dumps([item.strip() for item in intolerances.split(",") if item.strip()]),
-                    disliked_ingredients=json.dumps([item.strip() for item in dislikes.split(",") if item.strip()]),
-                    dietary_preferences=json.dumps([item.strip() for item in dietary_preferences.split(",") if item.strip()]),
-                    medical_considerations=json.dumps([item.strip() for item in medical_considerations.split(",") if item.strip()]),
-                    custom_diet="[]",
-                    pregnancy_status=pregnancy_enabled,
-                    pregnancy_trimester=pregnancy_trimester if pregnancy_enabled else None,
-                    pre_pregnancy_weight_kg=float(pre_pregnancy_weight) if pregnancy_enabled else None,
-                    current_pregnancy_weight_kg=float(current_pregnancy_weight) if pregnancy_enabled else None,
-                    breastfeeding_status=breastfeeding_enabled,
-                    exclusive_breastfeeding=exclusive_breastfeeding,
-                    mixed_feeding=mixed_feeding,
-                    breastfeeding_beyond_six_months=breastfeeding_beyond_six_months,
-                    usenote=notes,
-                )
-                st.success(f"Added profile: {name}")
-
+def _render_member_cards(profiles, state_key):
     if not profiles:
-        st.info("No profiles have been added yet.")
-        return
+        return None
+    valid_ids = {profile.id for profile in profiles}
+    selected_id = st.session_state.get(state_key)
+    if selected_id not in valid_ids:
+        selected_id = profiles[0].id
+        st.session_state[state_key] = selected_id
 
-    profile_ids = [profile.id for profile in profiles]
-    last_selected = st.session_state.get("selected_profile_id")
-    selected_id = last_selected if last_selected in profile_ids else profiles[0].id
-    selected_profile = next(profile for profile in profiles if profile.id == selected_id)
-
-    st.markdown("### Profile overview")
-    cards = st.columns(min(3, len(profiles)))
+    st.markdown("#### Your household")
+    columns = st.columns(min(len(profiles), 4))
     for index, profile in enumerate(profiles):
-        with cards[index % len(cards)]:
-            st.markdown(f"### {profile.name}")
-            st.caption(f"{profile.developmental_stage or 'adult'} • {profile.sex_reference or 'unspecified'}")
-            st.write(f"Age: {round((date.today() - profile.date_of_birth).days / 365.25, 1)} years" if profile.date_of_birth else "Age not specified")
-            st.write(f"Height/Weight: {profile.height_cm or '-'} cm / {profile.weight_kg or '-'} kg")
-            if st.button("Select", key=f"select_{profile.id}", use_container_width=True):
-                st.session_state["selected_profile_id"] = profile.id
-                selected_profile = profile
+        with columns[index % len(columns)]:
+            with st.container(border=True):
+                is_selected = profile.id == selected_id
+                _avatar(profile, width=88 if is_selected else 64)
+                st.markdown(f"<center><strong>{escape(profile.name)}</strong></center>", unsafe_allow_html=True)
+                if is_selected:
+                    st.caption(f"{profile.developmental_stage or 'Member'} · {_age_label(profile)}")
+                if st.button(
+                    "Selected" if is_selected else "View member",
+                    key=f"{state_key}_open_{profile.id}",
+                    type="primary" if is_selected else "secondary",
+                    use_container_width=True,
+                ):
+                    st.session_state[state_key] = profile.id
+                    st.rerun()
+    return next(profile for profile in profiles if profile.id == selected_id)
 
-    st.markdown(f"### Editing: {selected_profile.name}")
-    with st.form(f"edit_profile_{selected_profile.id}"):
-        new_name = st.text_input("Name", value=selected_profile.name, key=f"name_{selected_profile.id}")
-        new_stage = st.selectbox("Developmental stage", ["baby", "child", "adolescent", "adult", "older adult"], index=["baby", "child", "adolescent", "adult", "older adult"].index(selected_profile.developmental_stage or "adult"), key=f"stage_{selected_profile.id}")
-        new_sex = st.selectbox("Sex-related nutritional reference", ["female", "male", "unspecified"], index=["female", "male", "unspecified"].index(selected_profile.sex_reference or "unspecified"), key=f"sex_{selected_profile.id}")
 
-        field_col_a, field_col_b = st.columns(2)
-        with field_col_a:
-            new_height = st.number_input("Height (cm)", value=float(selected_profile.height_cm or 165), min_value=0.0, key=f"height_{selected_profile.id}")
-            new_weight = st.number_input("Weight (kg)", value=float(selected_profile.weight_kg or 60), min_value=0.0, key=f"weight_{selected_profile.id}")
-            new_activity = st.selectbox("Activity baseline", ["sedentary", "light", "moderate", "active", "very_active"], index=["sedentary", "light", "moderate", "active", "very_active"].index(selected_profile.activity_baseline or "moderate"), key=f"activity_{selected_profile.id}")
-            new_sports = st.text_input("Sport preferences", value=", ".join(parse_list_field(selected_profile.sport_preferences)), key=f"sports_{selected_profile.id}")
-        with field_col_b:
-            new_allergies = st.text_input("Allergies (comma separated)", value=", ".join(parse_list_field(selected_profile.allergies)), key=f"allergies_{selected_profile.id}")
-            new_intolerances = st.text_input("Intolerances", value=", ".join(parse_list_field(selected_profile.intolerances)), key=f"intolerances_{selected_profile.id}")
-            new_dislikes = st.text_input("Dislikes", value=", ".join(parse_list_field(selected_profile.disliked_ingredients)), key=f"dislikes_{selected_profile.id}")
-            new_preferences = st.text_input("Dietary preferences", value=", ".join(parse_list_field(selected_profile.dietary_preferences)), key=f"preferences_{selected_profile.id}")
-            new_medical = st.text_input("Medical considerations", value=", ".join(parse_list_field(selected_profile.medical_considerations)), key=f"medical_{selected_profile.id}")
+def _set_member_section(profile_id, section):
+    st.session_state[f"member_section_{profile_id}"] = section
 
-        pregnancy_value = st.checkbox("Pregnancy-related profile", value=bool(selected_profile.pregnancy_status), key=f"preg_{selected_profile.id}")
-        if pregnancy_value or selected_profile.pregnancy_status:
-            pregnancy_trimester = st.selectbox("Pregnancy trimester", [1, 2, 3], index=(selected_profile.pregnancy_trimester or 2) - 1, key=f"trimester_{selected_profile.id}")
-            pre_preg_weight = st.number_input("Pre-pregnancy weight (kg)", value=float(selected_profile.pre_pregnancy_weight_kg or (selected_profile.weight_kg or 60)), min_value=0.0, key=f"prepreg_{selected_profile.id}")
-            current_preg_weight = st.number_input("Current pregnancy weight (kg)", value=float(selected_profile.current_pregnancy_weight_kg or (selected_profile.weight_kg or 60)), min_value=0.0, key=f"currentpreg_{selected_profile.id}")
-        else:
-            pregnancy_trimester = None
-            pre_preg_weight = None
-            current_preg_weight = None
 
-        breastfeeding_value = st.checkbox("Breastfeeding", value=bool(selected_profile.breastfeeding_status), key=f"breastfeeding_{selected_profile.id}")
-        if breastfeeding_value:
-            exclusive = st.checkbox("Exclusive breastfeeding", value=bool(selected_profile.exclusive_breastfeeding), key=f"exclusive_{selected_profile.id}")
-            mixed = st.checkbox("Mixed feeding", value=bool(selected_profile.mixed_feeding), key=f"mixed_{selected_profile.id}")
-            beyond = st.checkbox("Breastfeeding beyond 6 months", value=bool(selected_profile.breastfeeding_beyond_six_months), key=f"beyond_{selected_profile.id}")
-        else:
-            exclusive = False
-            mixed = False
-            beyond = False
-
-        new_notes = st.text_area("Notes", value=selected_profile.usenote or "", key=f"notes_{selected_profile.id}")
-        save = st.form_submit_button("Update profile")
-        if save:
-            selected_profile.name = new_name
-            selected_profile.developmental_stage = new_stage
-            selected_profile.sex_reference = new_sex
-            selected_profile.height_cm = float(new_height)
-            selected_profile.weight_kg = float(new_weight)
-            selected_profile.activity_baseline = new_activity
-            selected_profile.sport_preferences = json.dumps([item.strip() for item in new_sports.split(",") if item.strip()])
-            selected_profile.allergies = json.dumps([item.strip() for item in new_allergies.split(",") if item.strip()])
-            selected_profile.intolerances = json.dumps([item.strip() for item in new_intolerances.split(",") if item.strip()])
-            selected_profile.disliked_ingredients = json.dumps([item.strip() for item in new_dislikes.split(",") if item.strip()])
-            selected_profile.dietary_preferences = json.dumps([item.strip() for item in new_preferences.split(",") if item.strip()])
-            selected_profile.medical_considerations = json.dumps([item.strip() for item in new_medical.split(",") if item.strip()])
-            selected_profile.pregnancy_status = bool(pregnancy_value)
-            selected_profile.pregnancy_trimester = pregnancy_trimester if pregnancy_value else None
-            selected_profile.pre_pregnancy_weight_kg = float(pre_preg_weight) if pregnancy_value and pre_preg_weight is not None else None
-            selected_profile.current_pregnancy_weight_kg = float(current_preg_weight) if pregnancy_value and current_preg_weight is not None else None
-            selected_profile.breastfeeding_status = bool(breastfeeding_value)
-            selected_profile.exclusive_breastfeeding = bool(exclusive)
-            selected_profile.mixed_feeding = bool(mixed)
-            selected_profile.breastfeeding_beyond_six_months = bool(beyond)
-            selected_profile.usenote = new_notes
+def _render_household_name(session):
+    household = session.query(Household).first()
+    if household is None:
+        household = Household(name="Matsiro Family")
+        session.add(household)
+        session.commit()
+        session.refresh(household)
+    with st.expander("Household settings", expanded=False):
+        name = st.text_input("Household name", value=household.name, key="household_name")
+        if st.button("Save household name"):
+            household.name = name.strip() or "Matsiro Family"
             session.commit()
-            st.success("Profile updated")
+            st.success("Household name saved.")
 
 
-def render_measurements_tab(session):
-    profiles = session.query(Profile).order_by(Profile.id).all()
-    if not profiles:
-        st.info("Add at least one profile first.")
-        return
-    profile = st.selectbox("Profile", profiles, format_func=lambda item: item.name)
-    with st.form("measurement_form"):
-        date_value = st.date_input("Measurement date", value=date.today())
-        height = st.number_input("Height (cm)", min_value=0.0, value=float(profile.height_cm or 165), step=1.0)
-        weight = st.number_input("Weight (kg)", min_value=0.0, value=float(profile.weight_kg or 60), step=0.5)
-        notes = st.text_area("Notes")
-        submitted = st.form_submit_button("Save measurement")
-        if submitted:
-            session.add(MeasurementRecord(profile_id=profile.id, date=date_value, height_cm=float(height), weight_kg=float(weight), notes=notes))
-            session.commit()
-            st.success("Measurement saved")
-
-    history = session.query(MeasurementRecord).filter(MeasurementRecord.profile_id == profile.id).order_by(MeasurementRecord.date.desc()).all()
-    if history:
-        st.subheader("Measurement history")
-        st.dataframe(pd.DataFrame([
-            {"date": item.date.isoformat(), "height_cm": item.height_cm, "weight_kg": item.weight_kg, "notes": item.notes}
-            for item in history
-        ]))
-
-
-def render_activities_tab(session):
-    profiles = session.query(Profile).order_by(Profile.id).all()
-    if not profiles:
-        st.info("Add at least one profile first.")
-        return
-    profile = st.selectbox("Profile", profiles, format_func=lambda item: item.name, key="activity_profile")
-    with st.form("activity_form"):
-        activity_date = st.date_input("Date", value=date.today())
-        sport_type = st.selectbox("Sport type", ["Walking", "Running", "Swimming", "Cycling", "Dancing", "Football", "Basketball", "Strength training", "Other"])
-        duration = st.number_input("Duration (minutes)", min_value=0, value=30, step=5)
-        intensity = st.selectbox("Intensity", ["low", "moderate", "high", "vigorous"])
-        notes = st.text_area("Notes")
-        submitted = st.form_submit_button("Save activity")
-        if submitted:
-            session.add(ActivityRecord(profile_id=profile.id, date=activity_date, sport_type=sport_type, duration_minutes=float(duration), intensity=intensity, notes=notes))
-            session.commit()
-            st.success("Activity saved")
-
-    records = session.query(ActivityRecord).filter(ActivityRecord.profile_id == profile.id).order_by(ActivityRecord.date.desc()).all()
-    if records:
-        st.subheader("Exercise history")
-        st.dataframe(pd.DataFrame([
-            {"date": item.date.isoformat(), "sport": item.sport_type, "minutes": item.duration_minutes, "intensity": item.intensity, "notes": item.notes}
-            for item in records
-        ]))
-
-
-def render_ingredients_tab(session):
-    st.subheader("Ingredient database")
-    with st.form("ingredient_form"):
-        common_name = st.text_input("Common name")
-        alt_names = st.text_input("Alternative names (comma separated)")
-        english_name = st.text_input("English name")
-        local_name = st.text_input("Local name")
-        food_category = st.selectbox("Food category", ["staple grain", "legume", "protein", "vegetable", "fruit", "root", "dairy", "other"])
-        preparation_state = st.selectbox("Preparation state", ["raw", "boiled", "roasted", "dried", "steamed", "grilled"])
-        energy = st.number_input("Energy (kcal/100 g)", value=0.0)
-        protein = st.number_input("Protein (g/100 g)", value=0.0)
-        carb = st.number_input("Carbohydrates (g/100 g)", value=0.0)
-        fat = st.number_input("Fat (g/100 g)", value=0.0)
-        fiber = st.number_input("Fiber (g/100 g)", value=0.0)
-        iron = st.number_input("Iron (mg/100 g)", value=0.0)
-        calcium = st.number_input("Calcium (mg/100 g)", value=0.0)
-        submitted = st.form_submit_button("Add ingredient")
-        if submitted and common_name:
-            ingredient = Ingredient(
-                common_name=common_name,
-                alternative_names=json.dumps([item.strip() for item in alt_names.split(",") if item.strip()]),
-                english_name=english_name,
-                local_name=local_name,
-                food_category=food_category,
-                preparation_state=preparation_state,
-                energy_kcal_per_100g=float(energy),
-                protein_g_per_100g=float(protein),
-                carbohydrates_g_per_100g=float(carb),
-                fat_g_per_100g=float(fat),
-                fiber_g_per_100g=float(fiber),
-                iron_mg_per_100g=float(iron),
-                calcium_mg_per_100g=float(calcium),
-            )
-            session.add(ingredient)
-            session.commit()
-            st.success(f"Added ingredient: {common_name}")
-
-    ingredients = session.query(Ingredient).order_by(Ingredient.common_name).all()
-    if ingredients:
-        st.dataframe(pd.DataFrame([
-            {"name": item.common_name, "category": item.food_category, "state": item.preparation_state, "energy_kcal": item.energy_kcal_per_100g}
-            for item in ingredients
-        ]))
-
-
-def render_meal_plan_tab(session):
-    profiles = session.query(Profile).order_by(Profile.id).all()
-    if not profiles:
-        st.info("Create at least one profile before planning meals.")
-        return
-    profile = st.selectbox("Profile", profiles, format_func=lambda item: item.name, key="meal_profile")
-    ingredients = session.query(Ingredient).all()
-    previous_meals = st.text_input("Previous meal ingredients (comma separated)" )
-    if st.button("Generate recommendation"):
-        recommendation = recommend_meal(
-            profile=profile,
-            ingredients=ingredients,
-            previous_meals=[item.strip() for item in previous_meals.split(",") if item.strip()],
-            household_profiles=session.query(Profile).all(),
+def _render_add_member(session, household_id):
+    with st.expander("＋ Add a family member", expanded=False):
+        name = st.text_input("Name", key="new_member_name")
+        photo = st.file_uploader(
+            "Profile picture (optional)",
+            type=["jpg", "jpeg", "png"],
+            key="new_member_photo",
         )
-        st.subheader(recommendation["title"])
-        for item in recommendation["items"]:
-            st.markdown(f"- {item['category']}: **{item['name']}** ({item['preparation']})")
-        st.write(recommendation["message"])
+        columns = st.columns(2)
+        with columns[0]:
+            birth_date = st.date_input("Date of birth", value=date(2000, 1, 1), key="new_member_birth")
+            stage = st.selectbox(
+                "Life stage",
+                ["baby", "child", "adolescent", "adult", "older adult"],
+                key="new_member_stage",
+            )
+            height = st.number_input("Height (cm)", min_value=0.0, value=165.0, key="new_member_height")
+        with columns[1]:
+            sex = st.selectbox(
+                "Nutrition reference",
+                ["female", "male", "unspecified"],
+                key="new_member_sex",
+            )
+            weight = st.number_input("Weight (kg)", min_value=0.0, value=60.0, key="new_member_weight")
+            activity = st.selectbox(
+                "Usual activity",
+                ["sedentary", "light", "moderate", "active", "very_active"],
+                index=2,
+                key="new_member_activity",
+            )
+        pregnancy = st.checkbox(
+            "Pregnancy-related profile",
+            disabled=sex != "female",
+            key="new_member_pregnancy",
+        )
+        trimester = pre_weight = current_weight = None
+        breastfeeding = exclusive = mixed = beyond = False
+        if pregnancy:
+            trimester = st.selectbox("Trimester", [1, 2, 3], index=1, key="new_member_trimester")
+            pre_weight = st.number_input("Pre-pregnancy weight (kg)", min_value=0.0, value=60.0)
+            current_weight = st.number_input("Current pregnancy weight (kg)", min_value=0.0, value=62.0)
+        breastfeeding = st.checkbox("Breastfeeding", key="new_member_breastfeeding")
+        if breastfeeding:
+            exclusive = st.checkbox("Exclusive breastfeeding", key="new_member_exclusive")
+            mixed = st.checkbox("Mixed feeding", key="new_member_mixed")
+            beyond = st.checkbox("Breastfeeding beyond 6 months", key="new_member_beyond")
+        allergies = st.text_input("Allergies (comma separated)", key="new_member_allergies")
+        intolerances = st.text_input("Intolerances (comma separated)", key="new_member_intolerances")
+        if st.button("Add member", type="primary"):
+            if not name.strip():
+                st.error("Enter a name before adding a member.")
+                return
+            profile = Profile(
+                household_id=household_id,
+                name=name.strip(),
+                date_of_birth=birth_date,
+                developmental_stage=stage,
+                sex_reference=sex,
+                height_cm=height or None,
+                weight_kg=weight or None,
+                activity_baseline=activity,
+                allergies=json.dumps(_csv_list(allergies)),
+                intolerances=json.dumps(_csv_list(intolerances)),
+                disliked_ingredients="[]",
+                dietary_preferences="[]",
+                medical_considerations="[]",
+                custom_diet="[]",
+                pregnancy_status=pregnancy,
+                pregnancy_trimester=trimester if pregnancy else None,
+                pre_pregnancy_weight_kg=pre_weight if pregnancy else None,
+                current_pregnancy_weight_kg=current_weight if pregnancy else None,
+                breastfeeding_status=breastfeeding,
+                exclusive_breastfeeding=exclusive,
+                mixed_feeding=mixed,
+                breastfeeding_beyond_six_months=beyond,
+                avatar_data=photo.getvalue() if photo else None,
+            )
+            session.add(profile)
+            session.commit()
+            st.session_state["household_member_id"] = profile.id
+            st.success(f"Added {profile.name}.")
+            st.rerun()
 
 
-def render_dashboard_tab(session):
+def _render_member_profile(profile):
+    st.markdown("### Profile details")
+    _avatar(profile, width=96)
+    st.caption("Upload a photo to personalize this member's tab.")
+    photo = st.file_uploader(
+        "Change profile picture",
+        type=["jpg", "jpeg", "png"],
+        key=f"member_photo_{profile.id}",
+    )
+    remove_photo = st.checkbox("Remove profile picture", key=f"remove_photo_{profile.id}")
+
+    columns = st.columns(2)
+    with columns[0]:
+        name = st.text_input("Name", value=profile.name, key=f"profile_name_{profile.id}")
+        birth_date = st.date_input(
+            "Date of birth",
+            value=profile.date_of_birth or date(2000, 1, 1),
+            key=f"profile_birth_{profile.id}",
+        )
+        stage_options = ["baby", "child", "adolescent", "adult", "older adult"]
+        stage_value = profile.developmental_stage if profile.developmental_stage in stage_options else "adult"
+        stage = st.selectbox(
+            "Life stage",
+            stage_options,
+            index=stage_options.index(stage_value),
+            key=f"profile_stage_{profile.id}",
+        )
+    with columns[1]:
+        sex_options = ["female", "male", "unspecified"]
+        sex_value = profile.sex_reference if profile.sex_reference in sex_options else "unspecified"
+        sex = st.selectbox(
+            "Nutrition reference",
+            sex_options,
+            index=sex_options.index(sex_value),
+            key=f"profile_sex_{profile.id}",
+        )
+        height = st.number_input(
+            "Height (cm)",
+            min_value=0.0,
+            value=float(profile.height_cm or 165),
+            key=f"profile_height_{profile.id}",
+        )
+        weight = st.number_input(
+            "Weight (kg)",
+            min_value=0.0,
+            value=float(profile.weight_kg or 60),
+            key=f"profile_weight_{profile.id}",
+        )
+        activity_options = ["sedentary", "light", "moderate", "active", "very_active"]
+        activity_value = profile.activity_baseline if profile.activity_baseline in activity_options else "moderate"
+        activity = st.selectbox(
+            "Usual activity",
+            activity_options,
+            index=activity_options.index(activity_value),
+            key=f"profile_activity_{profile.id}",
+        )
+    sports = st.text_input(
+        "Sports and activities",
+        value=", ".join(parse_list_field(profile.sport_preferences)),
+        key=f"profile_sports_{profile.id}",
+    )
+    notes = st.text_area("Notes", value=profile.usenote or "", key=f"profile_notes_{profile.id}")
+    if st.button("Save profile", type="primary", key=f"save_profile_{profile.id}"):
+        profile.name = name.strip() or profile.name
+        profile.date_of_birth = birth_date
+        profile.developmental_stage = stage
+        profile.sex_reference = sex
+        profile.height_cm = height or None
+        profile.weight_kg = weight or None
+        profile.activity_baseline = activity
+        profile.sport_preferences = json.dumps(_csv_list(sports))
+        profile.usenote = notes
+        if photo:
+            profile.avatar_data = photo.getvalue()
+        elif remove_photo:
+            profile.avatar_data = None
+        session.commit()
+        st.success("Profile saved.")
+        st.rerun()
+
+
+def _render_member_food_needs(session, profile):
+    st.markdown("### Food needs and preferences")
+    pregnancy = st.checkbox(
+        "Pregnancy-related profile",
+        value=bool(profile.pregnancy_status),
+        disabled=profile.sex_reference != "female",
+        key=f"pregnancy_{profile.id}",
+    )
+    trimester = profile.pregnancy_trimester or 2
+    pre_weight = float(profile.pre_pregnancy_weight_kg or profile.weight_kg or 60)
+    current_weight = float(profile.current_pregnancy_weight_kg or profile.weight_kg or 62)
+    if pregnancy:
+        trimester = st.selectbox(
+            "Trimester",
+            [1, 2, 3],
+            index=max(0, min(2, trimester - 1)),
+            key=f"trimester_{profile.id}",
+        )
+        pre_weight = st.number_input(
+            "Pre-pregnancy weight (kg)",
+            min_value=0.0,
+            value=pre_weight,
+            key=f"pre_weight_{profile.id}",
+        )
+        current_weight = st.number_input(
+            "Current pregnancy weight (kg)",
+            min_value=0.0,
+            value=current_weight,
+            key=f"current_weight_{profile.id}",
+        )
+    breastfeeding = st.checkbox(
+        "Breastfeeding",
+        value=bool(profile.breastfeeding_status),
+        key=f"breastfeeding_{profile.id}",
+    )
+    exclusive = mixed = beyond = False
+    if breastfeeding:
+        exclusive = st.checkbox(
+            "Exclusive breastfeeding",
+            value=bool(profile.exclusive_breastfeeding),
+            key=f"exclusive_{profile.id}",
+        )
+        mixed = st.checkbox(
+            "Mixed feeding",
+            value=bool(profile.mixed_feeding),
+            key=f"mixed_{profile.id}",
+        )
+        beyond = st.checkbox(
+            "Breastfeeding beyond 6 months",
+            value=bool(profile.breastfeeding_beyond_six_months),
+            key=f"beyond_{profile.id}",
+        )
+
+    allergies = st.text_input(
+        "Allergies",
+        value=", ".join(parse_list_field(profile.allergies)),
+        key=f"allergies_{profile.id}",
+    )
+    intolerances = st.text_input(
+        "Intolerances",
+        value=", ".join(parse_list_field(profile.intolerances)),
+        key=f"intolerances_{profile.id}",
+    )
+    dislikes = st.text_input(
+        "Disliked ingredients",
+        value=", ".join(parse_list_field(profile.disliked_ingredients)),
+        key=f"dislikes_{profile.id}",
+    )
+    preferences = st.text_input(
+        "Dietary preferences",
+        value=", ".join(parse_list_field(profile.dietary_preferences)),
+        key=f"preferences_{profile.id}",
+    )
+    medical = st.text_input(
+        "Medical or nutrition considerations",
+        value=", ".join(parse_list_field(profile.medical_considerations)),
+        key=f"medical_{profile.id}",
+    )
+    if st.button("Save food needs", type="primary", key=f"save_food_needs_{profile.id}"):
+        profile.pregnancy_status = bool(pregnancy)
+        profile.pregnancy_trimester = trimester if pregnancy else None
+        profile.pre_pregnancy_weight_kg = pre_weight if pregnancy else None
+        profile.current_pregnancy_weight_kg = current_weight if pregnancy else None
+        profile.breastfeeding_status = bool(breastfeeding)
+        profile.exclusive_breastfeeding = bool(exclusive)
+        profile.mixed_feeding = bool(mixed)
+        profile.breastfeeding_beyond_six_months = bool(beyond)
+        profile.allergies = json.dumps(_csv_list(allergies))
+        profile.intolerances = json.dumps(_csv_list(intolerances))
+        profile.disliked_ingredients = json.dumps(_csv_list(dislikes))
+        profile.dietary_preferences = json.dumps(_csv_list(preferences))
+        profile.medical_considerations = json.dumps(_csv_list(medical))
+        session.commit()
+        st.success("Food needs saved.")
+        st.rerun()
+
+
+def _render_measurements(session, profile):
+    with st.form(f"measurement_form_{profile.id}"):
+        measurement_date = st.date_input("Measurement date", value=date.today())
+        height = st.number_input(
+            "Height (cm)",
+            min_value=0.0,
+            value=float(profile.height_cm or 165),
+        )
+        weight = st.number_input(
+            "Weight (kg)",
+            min_value=0.0,
+            value=float(profile.weight_kg or 60),
+        )
+        notes = st.text_input("Notes")
+        submitted = st.form_submit_button("Add measurement", type="primary")
+    if submitted:
+        session.add(
+            MeasurementRecord(
+                profile_id=profile.id,
+                date=measurement_date,
+                height_cm=height or None,
+                weight_kg=weight or None,
+                notes=notes,
+            )
+        )
+        session.commit()
+        st.success("Measurement added.")
+        st.rerun()
+
+    history = (
+        session.query(MeasurementRecord)
+        .filter(MeasurementRecord.profile_id == profile.id)
+        .order_by(MeasurementRecord.date.desc())
+        .all()
+    )
+    if history:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Date": item.date.isoformat(),
+                        "Height (cm)": item.height_cm,
+                        "Weight (kg)": item.weight_kg,
+                        "Notes": item.notes,
+                    }
+                    for item in history
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No measurements yet. Add one above to start a history.")
+
+
+def _render_exercise(session, profile):
+    with st.form(f"activity_form_{profile.id}"):
+        activity_date = st.date_input("Activity date", value=date.today())
+        sport = st.selectbox(
+            "Activity",
+            ["Walking", "Running", "Swimming", "Cycling", "Dancing", "Football", "Basketball", "Strength training", "Other"],
+        )
+        duration = st.number_input("Duration (minutes)", min_value=0, value=30, step=5)
+        intensity = st.selectbox("Intensity", ["low", "moderate", "high", "vigorous"], index=1)
+        notes = st.text_input("Notes")
+        submitted = st.form_submit_button("Log activity", type="primary")
+    if submitted:
+        session.add(
+            ActivityRecord(
+                profile_id=profile.id,
+                date=activity_date,
+                sport_type=sport,
+                duration_minutes=float(duration),
+                intensity=intensity,
+                notes=notes,
+            )
+        )
+        session.commit()
+        st.success("Activity logged.")
+        st.rerun()
+
+    records = (
+        session.query(ActivityRecord)
+        .filter(ActivityRecord.profile_id == profile.id)
+        .order_by(ActivityRecord.date.desc())
+        .all()
+    )
+    if records:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Date": item.date.isoformat(),
+                        "Activity": item.sport_type,
+                        "Minutes": item.duration_minutes,
+                        "Intensity": item.intensity,
+                        "Notes": item.notes,
+                    }
+                    for item in records
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No activities logged yet.")
+
+
+def render_household_page(session, profiles):
+    st.markdown('<div class="eyebrow">Your family</div>', unsafe_allow_html=True)
+    st.title("Household")
+    _render_household_name(session)
+
+    household = session.query(Household).first()
+    _render_add_member(session, household.id)
     profiles = session.query(Profile).order_by(Profile.id).all()
     if not profiles:
-        st.info("No profiles yet.")
+        st.info("Add your first member to personalize meals and nutrition insights.")
         return
-    selected = st.selectbox("View requirements for", profiles, format_func=lambda item: item.name)
-    activities = session.query(ActivityRecord).filter(ActivityRecord.profile_id == selected.id).all()
-    requirements = calculate_daily_requirements(selected, activities)
-    rows = list_requirement_rows(selected, activities)
 
-    st.subheader(f"Daily nutritional overview for {selected.name}")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Energy", f"{requirements['energy_kcal']} kcal")
-    with col2:
-        st.metric("Protein", f"{requirements['protein_g']} g")
-    with col3:
-        st.metric("Fiber", f"{requirements['fiber_g']} g")
-    with col4:
-        st.metric("Hydration", f"{requirements['hydration_liters']} L")
+    profile = _render_member_cards(profiles, "household_member_id")
+    with st.container(border=True):
+        avatar_col, summary_col = st.columns([1, 4])
+        with avatar_col:
+            _avatar(profile, width=112)
+        with summary_col:
+            st.markdown(f"### {profile.name}")
+            st.caption(
+                f"{profile.sex_reference or 'Unspecified'} nutrition reference · "
+                f"{profile.developmental_stage or 'Member'} · {_age_label(profile)}"
+            )
+            metrics = st.columns(3)
+            metrics[0].metric("Height", f"{profile.height_cm or '—'} cm")
+            metrics[1].metric("Weight", f"{profile.weight_kg or '—'} kg")
+            metrics[2].metric(
+                "Activity",
+                (profile.activity_baseline or "moderate").replace("_", " ").title(),
+            )
+            allergies = parse_list_field(profile.allergies)
+            intolerances = parse_list_field(profile.intolerances)
+            preferences = parse_list_field(profile.dietary_preferences)
+            st.write(
+                f"**Food needs:** {', '.join(allergies + intolerances) or 'None saved'}"
+            )
+            if preferences:
+                st.write(f"**Preferences:** {', '.join(preferences)}")
+            if profile.pregnancy_status or profile.breastfeeding_status:
+                st.info("Pregnancy or lactation adjustments are enabled.")
 
-    st.caption(requirements["method"])
-    st.caption(requirements["reference_source"])
+    section_key = f"member_section_{profile.id}"
+    if section_key not in st.session_state:
+        st.session_state[section_key] = "Overview"
+    st.markdown("### Member workspace")
+    section = st.radio(
+        "Member workspace",
+        ["Overview", "Insights", "Exercise", "Measurements", "Food needs", "Profile"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key=section_key,
+    )
+    edit_col, needs_col = st.columns([1, 1])
+    with edit_col:
+        st.button(
+            "Edit profile",
+            key=f"edit_profile_link_{profile.id}",
+            on_click=_set_member_section,
+            args=(profile.id, "Profile"),
+        )
+    with needs_col:
+        st.button(
+            "Edit food needs",
+            key=f"edit_needs_link_{profile.id}",
+            on_click=_set_member_section,
+            args=(profile.id, "Food needs"),
+        )
 
-    if requirements.get("notes"):
-        st.markdown("### Guidance")
-        for bullet in requirements["notes"]:
-            st.write(f"- {bullet}")
+    if section == "Overview":
+        if profile.usenote:
+            st.write(profile.usenote)
+        else:
+            st.caption("Use Edit profile to add notes and update member details.")
+    elif section == "Insights":
+        activities = (
+            session.query(ActivityRecord)
+            .filter(ActivityRecord.profile_id == profile.id)
+            .all()
+        )
+        requirements = calculate_daily_requirements(profile, activities)
+        columns = st.columns(4)
+        columns[0].metric("Energy estimate", f"{requirements['energy_kcal']} kcal")
+        columns[1].metric("Protein", f"{requirements['protein_g']} g")
+        columns[2].metric("Fiber", f"{requirements['fiber_g']} g")
+        columns[3].metric("Hydration", f"{requirements['hydration_liters']} L")
+        st.caption(requirements["uncertainty"])
+        st.caption(requirements["method"])
+        if requirements["notes"]:
+            for note in requirements["notes"]:
+                st.write(f"• {note}")
+        with st.expander("All estimated daily values"):
+            st.dataframe(
+                pd.DataFrame(list_requirement_rows(profile, activities)),
+                use_container_width=True,
+                hide_index=True,
+            )
+    elif section == "Exercise":
+        st.subheader("Exercise and activity")
+        _render_exercise(session, profile)
+    elif section == "Measurements":
+        st.subheader("Measurements")
+        _render_measurements(session, profile)
+    elif section == "Food needs":
+        _render_member_food_needs(session, profile)
+    elif section == "Profile":
+        _render_member_profile(profile)
 
-    chart_data = pd.DataFrame(rows)
-    if not chart_data.empty:
-        chart_data = chart_data[chart_data["metric"].isin(["Energy Kcal", "Protein G", "Carbohydrates G", "Fiber G", "Iron Mg"])].copy()
-        st.markdown("### Key nutrients")
-        st.bar_chart(chart_data.set_index("metric")["value"])
 
-    st.markdown("### Full requirement list")
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+def _meal_state_key(plan_date, meal_type):
+    return f"meal_draft_{plan_date.isoformat()}_{meal_type}"
 
-    if requirements.get("adjustments"):
-        adjustments = requirements["adjustments"]
-        st.markdown("### Context")
-        st.write({
-            "baseline activity factor": adjustments.get("baseline_activity_factor"),
-            "exercise minutes": adjustments.get("exercise_minutes"),
-            "exercise energy top-up": adjustments.get("exercise_top_up_kcal"),
-            "pregnancy status": adjustments.get("pregnancy_status"),
-            "breastfeeding status": adjustments.get("breastfeeding_status"),
-        })
+
+def _load_meal_draft(session, plan_date, meal_type):
+    plan = (
+        session.query(MealPlan)
+        .filter(MealPlan.date == plan_date, MealPlan.meal_type == meal_type)
+        .order_by(MealPlan.id.desc())
+        .first()
+    )
+    if plan is None:
+        return []
+    try:
+        details = json.loads(plan.notes or "{}")
+    except (TypeError, json.JSONDecodeError):
+        details = {}
+    items = details.get("items")
+    if isinstance(items, list):
+        return items
+    rows = (
+        session.query(MealPlanItem)
+        .filter(MealPlanItem.meal_plan_id == plan.id)
+        .all()
+    )
+    return [
+        {
+            "category": "ingredient",
+            "name": item.ingredient_name,
+            "preparation": "",
+            "category_label": "Ingredient",
+            "locked": False,
+        }
+        for item in rows
+    ]
+
+
+def _previous_meal_ingredients(session, plan_date, exclude_type):
+    plans = (
+        session.query(MealPlan)
+        .filter(MealPlan.date == plan_date, MealPlan.meal_type != exclude_type)
+        .all()
+    )
+    plan_ids = [plan.id for plan in plans]
+    if not plan_ids:
+        return []
+    return [
+        item.ingredient_name
+        for item in session.query(MealPlanItem)
+        .filter(MealPlanItem.meal_plan_id.in_(plan_ids))
+        .all()
+    ]
+
+
+def _new_meal(profile, participants, ingredients, previous):
+    recommendation = recommend_meal(
+        profile=profile,
+        ingredients=ingredients,
+        previous_meals=previous,
+        household_profiles=participants,
+    )
+    return [
+        {
+            **item,
+            "locked": False,
+        }
+        for item in recommendation["items"]
+    ]
+
+
+def _randomize_one(profile, participants, ingredients, previous, items, index):
+    current = items[index]
+    other_names = {
+        item["name"]
+        for offset, item in enumerate(items)
+        if offset != index
+    }
+    replacement = recommend_ingredient(
+        profile=profile,
+        ingredients=ingredients,
+        category=current["category"],
+        previous_meals=previous,
+        household_profiles=participants,
+        exclude_names=other_names | {current["name"]},
+    )
+    if replacement is None:
+        return False
+    replacement["locked"] = current.get("locked", False)
+    items[index] = replacement
+    return True
+
+
+def _save_meal(session, profile, participants, plan_date, meal_type, items):
+    plan = (
+        session.query(MealPlan)
+        .filter(MealPlan.date == plan_date, MealPlan.meal_type == meal_type)
+        .order_by(MealPlan.id.desc())
+        .first()
+    )
+    if plan is None:
+        plan = MealPlan(
+            profile_id=profile.id,
+            date=plan_date,
+            meal_type=meal_type,
+        )
+        session.add(plan)
+        session.flush()
+    plan.profile_id = profile.id
+    plan.title = " + ".join(item["name"] for item in items[:3])
+    plan.notes = json.dumps(
+        {
+            "participants": [member.id for member in participants],
+            "items": items,
+        }
+    )
+    session.query(MealPlanItem).filter(
+        MealPlanItem.meal_plan_id == plan.id
+    ).delete(synchronize_session=False)
+    session.add_all(
+        [
+            MealPlanItem(
+                meal_plan_id=plan.id,
+                ingredient_name=item["name"],
+                quantity_g=0,
+            )
+            for item in items
+        ]
+    )
+    session.commit()
+
+
+def _render_meal_slot(session, profile, participants, ingredients, plan_date, meal_type, icon, label):
+    key = _meal_state_key(plan_date, meal_type)
+    if key not in st.session_state:
+        st.session_state[key] = _load_meal_draft(session, plan_date, meal_type)
+    items = st.session_state[key]
+    previous = _previous_meal_ingredients(session, plan_date, meal_type)
+
+    with st.container(border=True):
+        heading, generate = st.columns([4, 1])
+        with heading:
+            st.subheader(f"{icon}  {label}")
+        with generate:
+            if st.button(
+                "Build meal" if not items else "Randomize unlocked",
+                key=f"build_{key}",
+                type="primary" if not items else "secondary",
+                disabled=not ingredients or (bool(items) and not any(not item.get("locked") for item in items)),
+                use_container_width=True,
+            ):
+                if not items:
+                    items = _new_meal(profile, participants, ingredients, previous)
+                    if not items:
+                        st.warning("No safe suggestions yet. Add more ingredients or review household food needs.")
+                    st.session_state[key] = items
+                else:
+                    updated = False
+                    for index, item in enumerate(list(items)):
+                        if not item.get("locked"):
+                            updated = _randomize_one(
+                                profile, participants, ingredients, previous, items, index
+                            ) or updated
+                    st.session_state[key] = items
+                    if not updated:
+                        st.info("No alternative ingredients are available for this meal.")
+                st.rerun()
+
+        if not items:
+            st.caption("Build a meal to get household-aware ingredient suggestions.")
+            return
+
+        st.caption(
+            "Lock rows to preserve them during a meal randomize. The ↻ beside any row "
+            "replaces only that ingredient, even when it is locked."
+        )
+        for index, item in enumerate(items):
+            name_col, lock_col, reroll_col = st.columns([7, 1, 1])
+            with name_col:
+                st.markdown(
+                    f"**{item['name']}**  ·  {item.get('preparation', 'as preferred')}  "
+                    f"<span style='color:var(--matsiro-muted)'>{item.get('category_label', item.get('category', ''))}</span>",
+                    unsafe_allow_html=True,
+                )
+            with lock_col:
+                lock_label = "🔒" if item.get("locked") else "🔓"
+                if st.button(
+                    lock_label,
+                    key=f"lock_{key}_{index}",
+                    help="Keep this ingredient during whole-meal randomization.",
+                    use_container_width=True,
+                ):
+                    item["locked"] = not item.get("locked", False)
+                    st.session_state[key] = items
+                    st.rerun()
+            with reroll_col:
+                if st.button(
+                    "↻",
+                    key=f"reroll_{key}_{index}",
+                    help="Randomize this ingredient only. Other ingredients stay unchanged.",
+                    use_container_width=True,
+                ):
+                    if _randomize_one(profile, participants, ingredients, previous, items, index):
+                        st.session_state[key] = items
+                        st.rerun()
+                    else:
+                        st.warning("No safe alternative is available for this ingredient.")
+
+        unused = [item.common_name for item in ingredients if item.common_name not in {row["name"] for row in items}]
+        with st.expander("＋ Add an ingredient manually"):
+            if unused:
+                selected_ingredient = st.selectbox(
+                    "Ingredient",
+                    unused,
+                    key=f"add_ingredient_select_{key}",
+                )
+                if st.button("Add ingredient", key=f"add_ingredient_{key}"):
+                    ingredient = next(item for item in ingredients if item.common_name == selected_ingredient)
+                    items.append(
+                        {
+                            "category": ingredient.food_category,
+                            "name": ingredient.common_name,
+                            "preparation": ingredient.preparation_state,
+                            "category_label": ingredient.food_category,
+                            "locked": False,
+                        }
+                    )
+                    st.session_state[key] = items
+                    st.rerun()
+            else:
+                st.caption("All available ingredients are already included.")
+
+        if st.button("Save meal to plan", type="primary", key=f"save_meal_{key}"):
+            _save_meal(session, profile, participants, plan_date, meal_type, items)
+            st.success(f"{label} saved to the plan.")
+            st.rerun()
+
+
+def render_plan_page(session, profiles):
+    st.markdown('<div class="eyebrow">Make family meals easier</div>', unsafe_allow_html=True)
+    st.title("Your meal plan")
+    if not profiles:
+        st.info("Add a household member first, then come back to build a meal plan.")
+        return
+
+    if "plan_date_widget" not in st.session_state:
+        st.session_state["plan_date_widget"] = date.today()
+    selected_day = st.session_state["plan_date_widget"]
+    monday = selected_day - timedelta(days=selected_day.weekday())
+    week_cols = st.columns(7)
+    for offset, column in enumerate(week_cols):
+        day = monday + timedelta(days=offset)
+        with column:
+            if st.button(
+                f"{day.strftime('%a')}  {day.day}",
+                key=f"plan_day_{day.isoformat()}",
+                type="primary" if day == selected_day else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["plan_date_widget"] = day
+                st.rerun()
+
+    date_col, summary_col = st.columns([1, 3])
+    with date_col:
+        selected_day = st.date_input("Planning date", key="plan_date_widget")
+    with summary_col:
+        st.markdown(f"### {selected_day.strftime('%A, %B %d')}")
+        st.caption("Select who is eating. Suggestions will honor the selected members' restrictions.")
+
+    member_col, meal_col = st.columns([1.05, 2.95])
+    participants = []
+    with member_col:
+        st.markdown("### Who's eating?")
+        st.caption("Choose members to apply their food needs.")
+        for profile in profiles:
+            with st.container(border=True):
+                avatar_col, name_col, check_col = st.columns([1, 2.3, 0.8])
+                with avatar_col:
+                    _avatar(profile, width=44)
+                with name_col:
+                    st.markdown(f"**{profile.name}**")
+                    restrictions = parse_list_field(profile.allergies) + parse_list_field(profile.intolerances)
+                    st.caption(", ".join(restrictions) if restrictions else "No restrictions")
+                with check_col:
+                    key = f"plan_member_{profile.id}"
+                    if key not in st.session_state:
+                        st.session_state[key] = True
+                    included = st.checkbox(
+                        "Included",
+                        key=key,
+                        label_visibility="collapsed",
+                    )
+                if included:
+                    participants.append(profile)
+
+    with meal_col:
+        st.markdown("### Plan meals")
+        if not participants:
+            st.warning("Choose at least one member to get safe, relevant meal suggestions.")
+            return
+
+        ingredients = session.query(Ingredient).order_by(Ingredient.common_name).all()
+        if not ingredients:
+            st.info("Add ingredients in Food library before generating meal suggestions.")
+            return
+
+        primary = participants[0]
+        for row in range(2):
+            meal_cols = st.columns(2)
+            for column, slot in zip(meal_cols, MEAL_SLOTS[row * 2 : row * 2 + 2]):
+                meal_type, icon, label = slot
+                with column:
+                    _render_meal_slot(
+                        session,
+                        primary,
+                        participants,
+                        ingredients,
+                        selected_day,
+                        meal_type,
+                        icon,
+                        label,
+                    )
+
+
+def render_food_library(session):
+    st.markdown('<div class="eyebrow">Your local food catalog</div>', unsafe_allow_html=True)
+    st.title("Food library")
+    search = st.text_input("Search ingredients", placeholder="Search by name or category")
+    with st.expander("＋ Add an ingredient", expanded=False):
+        name = st.text_input("Ingredient name", key="ingredient_name")
+        columns = st.columns(2)
+        with columns[0]:
+            category = st.selectbox(
+                "Category",
+                ["staple grain", "legume", "protein", "vegetable", "fruit", "root", "dairy", "other"],
+                key="ingredient_category",
+            )
+            preparation = st.selectbox(
+                "Typical preparation",
+                ["raw", "boiled", "roasted", "dried", "steamed", "grilled"],
+                key="ingredient_preparation",
+            )
+            energy = st.number_input("Energy (kcal / 100 g)", min_value=0.0, key="ingredient_energy")
+        with columns[1]:
+            alternatives = st.text_input("Alternative names (comma separated)", key="ingredient_alternatives")
+            protein = st.number_input("Protein (g / 100 g)", min_value=0.0, key="ingredient_protein")
+            fiber = st.number_input("Fiber (g / 100 g)", min_value=0.0, key="ingredient_fiber")
+        if st.button("Save ingredient", type="primary"):
+            if not name.strip():
+                st.error("Enter an ingredient name.")
+            else:
+                session.add(
+                    Ingredient(
+                        common_name=name.strip(),
+                        alternative_names=json.dumps(_csv_list(alternatives)),
+                        english_name=name.strip(),
+                        food_category=category,
+                        preparation_state=preparation,
+                        energy_kcal_per_100g=energy,
+                        protein_g_per_100g=protein,
+                        fiber_g_per_100g=fiber,
+                    )
+                )
+                session.commit()
+                st.success(f"Added {name.strip()}.")
+                st.rerun()
+
+    query = session.query(Ingredient).order_by(Ingredient.common_name)
+    if search.strip():
+        query = query.filter(Ingredient.common_name.ilike(f"%{search.strip()}%"))
+    ingredients = query.all()
+    if ingredients:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Ingredient": item.common_name,
+                        "Category": item.food_category,
+                        "Preparation": item.preparation_state,
+                        "Energy / 100 g": item.energy_kcal_per_100g,
+                        "Protein / 100 g": item.protein_g_per_100g,
+                    }
+                    for item in ingredients
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No ingredients match that search.")
+
+
+def render_insights_page(session, profiles):
+    st.markdown('<div class="eyebrow">Nutrition and activity, at a glance</div>', unsafe_allow_html=True)
+    st.title("Insights")
+    if not profiles:
+        st.info("Add a household member to see personalized insights.")
+        return
+    profile = _render_member_cards(profiles, "insights_member_id")
+    activities = (
+        session.query(ActivityRecord)
+        .filter(ActivityRecord.profile_id == profile.id)
+        .all()
+    )
+    requirements = calculate_daily_requirements(profile, activities)
+    columns = st.columns(4)
+    columns[0].metric("Energy estimate", f"{requirements['energy_kcal']} kcal")
+    columns[1].metric("Protein", f"{requirements['protein_g']} g")
+    columns[2].metric("Fiber", f"{requirements['fiber_g']} g")
+    columns[3].metric("Hydration", f"{requirements['hydration_liters']} L")
+    st.info(
+        "These are estimated daily nutrition targets based on the member's profile. "
+        "They are not intake or progress measurements—the app does not yet record "
+        "food actually eaten."
+    )
+
+    details_col, activity_col = st.columns(2)
+    with details_col:
+        st.subheader("Estimated daily targets")
+        st.caption("Use these as general planning references, not medical prescriptions.")
+        rows = list_requirement_rows(profile, activities)
+        targets = pd.DataFrame(
+            [
+                {
+                    "Nutrient": row["metric"],
+                    "Estimated target": f"{row['value']} {row['unit']}",
+                }
+                for row in rows
+            ]
+        )
+        st.dataframe(targets, use_container_width=True, hide_index=True)
+        with st.expander("View all values and assumptions"):
+            st.write(requirements["method"])
+            st.write(requirements["reference_source"])
+            for note in requirements["notes"]:
+                st.write(f"• {note}")
+    with activity_col:
+        st.subheader("Exercise logged this week")
+        week_start = date.today() - timedelta(days=6)
+        week_records = [
+            record
+            for record in activities
+            if week_start <= record.date <= date.today()
+        ]
+        totals_by_day = {week_start + timedelta(days=offset): 0.0 for offset in range(7)}
+        for record in week_records:
+            totals_by_day[record.date] += record.duration_minutes
+        activity_chart = pd.DataFrame(
+            [
+                {"Day": day.strftime("%a"), "Minutes": minutes}
+                for day, minutes in totals_by_day.items()
+            ]
+        )
+        st.bar_chart(activity_chart.set_index("Day")["Minutes"])
+        st.caption("Minutes come from activity logs; blank days mean no activity was recorded.")
+        recent = (
+            session.query(ActivityRecord)
+            .filter(ActivityRecord.profile_id == profile.id)
+            .order_by(ActivityRecord.date.desc())
+            .limit(8)
+            .all()
+        )
+        if recent:
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Date": record.date.isoformat(),
+                            "Activity": record.sport_type,
+                            "Minutes": record.duration_minutes,
+                            "Intensity": record.intensity,
+                        }
+                        for record in recent
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("Log exercise from this member's Exercise workspace.")
 
 
 def main():
     init_db()
+    apply_theme()
     session = SessionLocal()
-    ensure_seed_data(session)
+    try:
+        ensure_seed_data(session)
+        household = session.query(Household).first()
+        profiles = session.query(Profile).order_by(Profile.id).all()
 
-    st.title("Matsiro")
-    st.caption("Offline-first family nutrition planning and healthy living support")
+        with st.sidebar:
+            st.markdown("## 🥗 Matsiro")
+            st.caption("Family food, made simpler")
+            page = st.radio(
+                "Navigate",
+                ["Plan", "Household", "Food library", "Insights"],
+                label_visibility="collapsed",
+                key="navigation",
+            )
+            st.divider()
+            st.caption("Use Streamlit’s top-right menu to switch light and dark themes.")
+            st.caption("Your household data stays on this device.")
 
-    tabs = st.tabs(["Household", "Profiles", "Measurements", "Activity", "Ingredients", "Meal planner", "Dashboard"])
-    with tabs[0]:
-        render_household_tab(session)
-    with tabs[1]:
-        render_profiles_tab(session)
-    with tabs[2]:
-        render_measurements_tab(session)
-    with tabs[3]:
-        render_activities_tab(session)
-    with tabs[4]:
-        render_ingredients_tab(session)
-    with tabs[5]:
-        render_meal_plan_tab(session)
-    with tabs[6]:
-        render_dashboard_tab(session)
-
-    session.close()
+        if page == "Plan":
+            render_plan_page(session, profiles)
+        elif page == "Household":
+            render_household_page(session, profiles)
+        elif page == "Food library":
+            render_food_library(session)
+        else:
+            render_insights_page(session, profiles)
+    finally:
+        session.close()
 
 
 if __name__ == "__main__":

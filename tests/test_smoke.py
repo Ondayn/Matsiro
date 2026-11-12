@@ -4,7 +4,7 @@ from datetime import date
 from matsiro.database import SessionLocal, init_db
 from matsiro.models import Household, Ingredient, MeasurementRecord, Profile
 from matsiro.nutrition_engine import calculate_daily_requirements
-from matsiro.recommendation_engine import recommend_meal
+from matsiro.recommendation_engine import recommend_ingredient, recommend_meal
 
 
 class MatsiroSmokeTests(unittest.TestCase):
@@ -156,12 +156,59 @@ class MatsiroSmokeTests(unittest.TestCase):
             Ingredient(common_name="Banana", food_category="fruit", preparation_state="raw", energy_kcal_per_100g=89, protein_g_per_100g=1.1),
             Ingredient(common_name="Brown rice", food_category="staple grain", preparation_state="boiled", energy_kcal_per_100g=111, protein_g_per_100g=2.6),
             Ingredient(common_name="Beans", food_category="legume", preparation_state="boiled", energy_kcal_per_100g=132, protein_g_per_100g=8.7),
+            Ingredient(common_name="Chicken", food_category="protein", preparation_state="grilled", energy_kcal_per_100g=165, protein_g_per_100g=31),
         ]
         result = recommend_meal(profile, ingredients, household_profiles=[profile])
         names = {item["name"] for item in result["items"]}
         self.assertNotIn("Peanut", names)
         self.assertNotIn("Banana", names)
+        self.assertNotIn("Chicken", names)
         self.assertTrue(names)
+
+    def test_single_ingredient_randomization_respects_locks_and_household_needs(self):
+        profile = Profile(
+            household_id=self.household.id,
+            name="Meal planner",
+            allergies="[]",
+            intolerances="[]",
+            disliked_ingredients="[]",
+            custom_diet="[]",
+        )
+        household_member = Profile(
+            household_id=self.household.id,
+            name="Household member",
+            allergies='["cassava"]',
+            intolerances="[]",
+            disliked_ingredients="[]",
+            custom_diet="[]",
+        )
+        ingredients = [
+            Ingredient(
+                common_name="Brown rice",
+                food_category="staple grain",
+                preparation_state="boiled",
+            ),
+            Ingredient(
+                common_name="Cassava",
+                food_category="staple root",
+                preparation_state="boiled",
+            ),
+            Ingredient(
+                common_name="Millet",
+                food_category="staple grain",
+                preparation_state="boiled",
+            ),
+        ]
+
+        replacement = recommend_ingredient(
+            profile,
+            ingredients,
+            "carbohydrates",
+            household_profiles=[profile, household_member],
+            exclude_names=["Brown rice"],
+        )
+
+        self.assertEqual(replacement["name"], "Millet")
 
 
 if __name__ == "__main__":

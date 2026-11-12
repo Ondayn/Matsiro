@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -45,6 +45,7 @@ class Profile(Base):
     breastfeeding_beyond_six_months = Column(Boolean, default=False)
     custom_diet = Column(Text, default="[]")
     usenote = Column(Text, default="")
+    avatar_data = Column(LargeBinary, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

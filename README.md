@@ -4,7 +4,11 @@ Matsiro is an offline-first family nutrition planning application built with Pyt
 
 ## Features
 
+- A colorful family meal-planning workspace with an optional dark theme
+- Saved daily meal plans with household member participation controls
+- Per-ingredient randomization and lock controls, with allergy-aware alternatives
 - Manage multiple household profiles with individual nutrition needs
+- Member-specific insights, exercise logs, measurement history, and profile pictures
 - Track measurements and activity history
 - Store ingredients with preparation-state detail
 - Generate nutrition estimates using household-specific rules
