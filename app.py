@@ -201,6 +201,46 @@ def apply_theme():
           color: #fff;
           font-size: 1.25rem;
         }}
+        .st-key-selected-profile-zone {{
+          position: sticky !important;
+          top: 1rem;
+          align-self: flex-start;
+          z-index: 20;
+          background: var(--matsiro-surface);
+          box-shadow: 0 8px 18px color-mix(in srgb, var(--matsiro-text) 10%, transparent);
+        }}
+        .st-key-plan-eater-grid {{
+          scrollbar-width: auto;
+          scrollbar-color: var(--matsiro-primary) var(--matsiro-surface-alt);
+        }}
+        .st-key-plan-eater-grid [data-testid="stHorizontalBlock"] {{
+          display: flex !important;
+          flex-wrap: wrap;
+          align-items: flex-start;
+          gap: .75rem;
+        }}
+        .st-key-plan-eater-grid [data-testid="stHorizontalBlock"] > [data-testid="column"] {{
+          flex: 1 1 220px !important;
+          width: auto !important;
+          min-width: min(100%, 220px) !important;
+          max-width: 100%;
+          padding: 0 !important;
+        }}
+        .st-key-plan-eater-grid [data-testid="stVerticalBlockBorderWrapper"] {{
+          height: auto !important;
+        }}
+        .st-key-plan-eater-grid::-webkit-scrollbar {{
+          width: 12px;
+        }}
+        .st-key-plan-eater-grid::-webkit-scrollbar-track {{
+          background: var(--matsiro-surface-alt);
+          border-radius: 999px;
+        }}
+        .st-key-plan-eater-grid::-webkit-scrollbar-thumb {{
+          background: var(--matsiro-primary);
+          border: 3px solid var(--matsiro-surface-alt);
+          border-radius: 999px;
+        }}
         @media (max-width: 640px) {{
           [data-testid="stMainBlockContainer"] {{
             padding: 1.25rem 1rem 3rem;
@@ -266,7 +306,105 @@ def _age_label(profile):
     return f"{years:.0f} years"
 
 
-def _render_member_cards(profiles, state_key):
+def _render_profile_summary(profile, requirements=None, activities=None):
+    with st.container(border=True, key="selected-profile-zone"):
+        if requirements is None:
+            avatar_col, summary_col = st.columns([1, 8])
+            with avatar_col:
+                _avatar(profile, width=64)
+            with summary_col:
+                st.caption("Profile and demographics")
+                st.markdown(f"### {escape(profile.name)}")
+                st.caption(
+                    f"{profile.sex_reference or 'Unspecified'} nutrition reference · "
+                    f"{profile.developmental_stage or 'Member'} · {_age_label(profile)}"
+                )
+                restrictions = (
+                    parse_list_field(profile.allergies)
+                    + parse_list_field(profile.intolerances)
+                )
+                st.caption(
+                    f"Food needs: {', '.join(restrictions) or 'None saved'}"
+                )
+            return
+
+        avatar_col, summary_col = st.columns([1, 8])
+        with avatar_col:
+            _avatar(profile, width=64)
+        with summary_col:
+            st.caption("Profile and demographics")
+            st.markdown(f"### {escape(profile.name)}")
+            st.caption(
+                f"{profile.sex_reference or 'Unspecified'} nutrition reference · "
+                f"{profile.developmental_stage or 'Member'} · {_age_label(profile)}"
+            )
+        activities = activities or []
+        with st.expander("Estimated nutritional needs"):
+            rows = list_requirement_rows(profile, activities)
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Nutrient": row["metric"],
+                            "Estimated need": f"{row['value']} {row['unit']}",
+                        }
+                        for row in rows
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.write(requirements["method"])
+            st.write(requirements["reference_source"])
+            for note in requirements["notes"]:
+                st.write(note)
+            st.caption(requirements["uncertainty"])
+            st.caption(
+                "These are planning estimates, not intake or progress measurements "
+                "or medical prescriptions."
+            )
+        with st.expander("Exercise log"):
+            week_start = date.today() - timedelta(days=6)
+            week_records = [
+                activity
+                for activity in activities
+                if week_start <= activity.date <= date.today()
+            ]
+            totals_by_day = {
+                week_start + timedelta(days=offset): 0.0 for offset in range(7)
+            }
+            for activity in week_records:
+                totals_by_day[activity.date] += activity.duration_minutes
+            activity_chart = pd.DataFrame(
+                [
+                    {"Day": day.strftime("%a"), "Minutes": minutes}
+                    for day, minutes in totals_by_day.items()
+                ]
+            )
+            st.bar_chart(activity_chart.set_index("Day")["Minutes"])
+            st.caption("Blank days indicate that no activity was recorded.")
+            recent = sorted(activities, key=lambda item: item.date, reverse=True)[:8]
+            if recent:
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "Date": activity.date.isoformat(),
+                                "Activity": activity.sport_type,
+                                "Minutes": activity.duration_minutes,
+                                "Intensity": activity.intensity,
+                            }
+                            for activity in recent
+                        ]
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("No activities logged yet.")
+
+
+def _selected_profile(profiles, state_key):
     if not profiles:
         return None
     valid_ids = {profile.id for profile in profiles}
@@ -274,26 +412,37 @@ def _render_member_cards(profiles, state_key):
     if selected_id not in valid_ids:
         selected_id = profiles[0].id
         st.session_state[state_key] = selected_id
+    return next(profile for profile in profiles if profile.id == selected_id)
 
+
+def _render_member_cards(profiles, state_key, requirements=None, activities=None):
+    if not profiles:
+        return None
+    selected_profile = _selected_profile(profiles, state_key)
     st.markdown("#### Your household")
+    _render_profile_summary(selected_profile, requirements, activities)
+
     columns = st.columns(min(len(profiles), 4))
     for index, profile in enumerate(profiles):
         with columns[index % len(columns)]:
             with st.container(border=True):
-                is_selected = profile.id == selected_id
-                _avatar(profile, width=88 if is_selected else 64)
-                st.markdown(f"<center><strong>{escape(profile.name)}</strong></center>", unsafe_allow_html=True)
-                if is_selected:
-                    st.caption(f"{profile.developmental_stage or 'Member'} · {_age_label(profile)}")
+                _avatar(profile, width=64)
+                st.markdown(
+                    f"<center><strong>{escape(profile.name)}</strong></center>",
+                    unsafe_allow_html=True,
+                )
+                st.caption(f"{profile.developmental_stage or 'Member'} · {_age_label(profile)}")
+                is_selected = profile.id == selected_profile.id
                 if st.button(
                     "Selected" if is_selected else "View member",
                     key=f"{state_key}_open_{profile.id}",
                     type="primary" if is_selected else "secondary",
+                    disabled=is_selected,
                     use_container_width=True,
                 ):
                     st.session_state[state_key] = profile.id
                     st.rerun()
-    return next(profile for profile in profiles if profile.id == selected_id)
+    return selected_profile
 
 
 def _set_member_section(profile_id, section):
@@ -700,38 +849,26 @@ def render_household_page(session, profiles):
         st.info("Add your first member to personalize meals and nutrition insights.")
         return
 
-    profile = _render_member_cards(profiles, "household_member_id")
-    with st.container(border=True):
-        avatar_col, summary_col = st.columns([1, 4])
-        with avatar_col:
-            _avatar(profile, width=112)
-        with summary_col:
-            st.markdown(f"### {profile.name}")
-            st.caption(
-                f"{profile.sex_reference or 'Unspecified'} nutrition reference · "
-                f"{profile.developmental_stage or 'Member'} · {_age_label(profile)}"
-            )
-            metrics = st.columns(3)
-            metrics[0].metric("Height", f"{profile.height_cm or '—'} cm")
-            metrics[1].metric("Weight", f"{profile.weight_kg or '—'} kg")
-            metrics[2].metric(
-                "Activity",
-                (profile.activity_baseline or "moderate").replace("_", " ").title(),
-            )
-            allergies = parse_list_field(profile.allergies)
-            intolerances = parse_list_field(profile.intolerances)
-            preferences = parse_list_field(profile.dietary_preferences)
-            st.write(
-                f"**Food needs:** {', '.join(allergies + intolerances) or 'None saved'}"
-            )
-            if preferences:
-                st.write(f"**Preferences:** {', '.join(preferences)}")
-            if profile.pregnancy_status or profile.breastfeeding_status:
-                st.info("Pregnancy or lactation adjustments are enabled.")
-
+    profile = _selected_profile(profiles, "household_member_id")
     section_key = f"member_section_{profile.id}"
     if section_key not in st.session_state:
         st.session_state[section_key] = "Overview"
+    section = st.session_state[section_key]
+    activities = None
+    requirements = None
+    if section == "Insights":
+        activities = (
+            session.query(ActivityRecord)
+            .filter(ActivityRecord.profile_id == profile.id)
+            .all()
+        )
+        requirements = calculate_daily_requirements(profile, activities)
+    _render_member_cards(
+        profiles,
+        "household_member_id",
+        requirements=requirements,
+        activities=activities,
+    )
     st.markdown("### Member workspace")
     section = st.radio(
         "Member workspace",
@@ -762,28 +899,10 @@ def render_household_page(session, profiles):
         else:
             st.caption("Use Edit profile to add notes and update member details.")
     elif section == "Insights":
-        activities = (
-            session.query(ActivityRecord)
-            .filter(ActivityRecord.profile_id == profile.id)
-            .all()
+        st.caption(
+            "Estimated nutritional needs and exercise logs are available in the "
+            "sticky profile card above."
         )
-        requirements = calculate_daily_requirements(profile, activities)
-        columns = st.columns(4)
-        columns[0].metric("Energy estimate", f"{requirements['energy_kcal']} kcal")
-        columns[1].metric("Protein", f"{requirements['protein_g']} g")
-        columns[2].metric("Fiber", f"{requirements['fiber_g']} g")
-        columns[3].metric("Hydration", f"{requirements['hydration_liters']} L")
-        st.caption(requirements["uncertainty"])
-        st.caption(requirements["method"])
-        if requirements["notes"]:
-            for note in requirements["notes"]:
-                st.write(f"• {note}")
-        with st.expander("All estimated daily values"):
-            st.dataframe(
-                pd.DataFrame(list_requirement_rows(profile, activities)),
-                use_container_width=True,
-                hide_index=True,
-            )
     elif section == "Exercise":
         st.subheader("Exercise and activity")
         _render_exercise(session, profile)
@@ -800,13 +919,21 @@ def _meal_state_key(plan_date, meal_type):
     return f"meal_draft_{plan_date.isoformat()}_{meal_type}"
 
 
-def _load_meal_draft(session, plan_date, meal_type):
-    plan = (
+def _meal_participant_key(plan_date, meal_type, profile_id):
+    return f"plan_member_{plan_date.isoformat()}_{meal_type}_{profile_id}"
+
+
+def _meal_plan_for_date(session, plan_date, meal_type):
+    return (
         session.query(MealPlan)
         .filter(MealPlan.date == plan_date, MealPlan.meal_type == meal_type)
         .order_by(MealPlan.id.desc())
         .first()
     )
+
+
+def _load_meal_draft(session, plan_date, meal_type):
+    plan = _meal_plan_for_date(session, plan_date, meal_type)
     if plan is None:
         return []
     try:
@@ -831,6 +958,51 @@ def _load_meal_draft(session, plan_date, meal_type):
         }
         for item in rows
     ]
+
+
+def _load_meal_participants(session, plan_date, meal_type, profiles):
+    plan = _meal_plan_for_date(session, plan_date, meal_type)
+    if plan is None:
+        return {profile.id for profile in profiles}
+    try:
+        details = json.loads(plan.notes or "{}")
+    except (TypeError, json.JSONDecodeError):
+        details = {}
+    saved_ids = details.get("participants")
+    if not isinstance(saved_ids, list):
+        return {profile.id for profile in profiles}
+    profile_ids = {profile.id for profile in profiles}
+    participants = set()
+    for profile_id in saved_ids:
+        if isinstance(profile_id, bool):
+            continue
+        try:
+            profile_id = int(profile_id)
+        except (TypeError, ValueError):
+            continue
+        if profile_id in profile_ids:
+            participants.add(profile_id)
+    return participants
+
+
+def _meal_has_unsaved_changes(session, plan_date, meal_type, profiles):
+    draft_key = _meal_state_key(plan_date, meal_type)
+    saved_items = _load_meal_draft(session, plan_date, meal_type)
+    if st.session_state.get(draft_key, saved_items) != saved_items:
+        return True
+
+    saved_participants = _load_meal_participants(
+        session, plan_date, meal_type, profiles
+    )
+    current_participants = {
+        profile.id
+        for profile in profiles
+        if st.session_state.get(
+            _meal_participant_key(plan_date, meal_type, profile.id),
+            profile.id in saved_participants,
+        )
+    }
+    return current_participants != saved_participants
 
 
 def _previous_meal_ingredients(session, plan_date, exclude_type):
@@ -972,7 +1144,7 @@ def _render_meal_slot(session, profile, participants, ingredients, plan_date, me
             "replaces only that ingredient, even when it is locked."
         )
         for index, item in enumerate(items):
-            name_col, lock_col, reroll_col = st.columns([7, 1, 1])
+            name_col, lock_col, reroll_col, delete_col = st.columns([7, 1, 1, 1])
             with name_col:
                 st.markdown(
                     f"**{item['name']}**  ·  {item.get('preparation', 'as preferred')}  "
@@ -1002,6 +1174,16 @@ def _render_meal_slot(session, profile, participants, ingredients, plan_date, me
                         st.rerun()
                     else:
                         st.warning("No safe alternative is available for this ingredient.")
+            with delete_col:
+                if st.button(
+                    "✕",
+                    key=f"delete_{key}_{index}",
+                    help=f"Remove {item['name']} from this meal.",
+                    use_container_width=True,
+                ):
+                    items.pop(index)
+                    st.session_state[key] = items
+                    st.rerun()
 
         unused = [item.common_name for item in ingredients if item.common_name not in {row["name"] for row in items}]
         with st.expander("＋ Add an ingredient manually"):
@@ -1043,6 +1225,7 @@ def render_plan_page(session, profiles):
         st.info("Add a household member first, then come back to build a meal plan.")
         return
 
+    pending_meal = st.session_state.get("pending_meal_slot")
     if "plan_date_widget" not in st.session_state:
         st.session_state["plan_date_widget"] = date.today()
     selected_day = st.session_state["plan_date_widget"]
@@ -1055,6 +1238,7 @@ def render_plan_page(session, profiles):
                 f"{day.strftime('%a')}  {day.day}",
                 key=f"plan_day_{day.isoformat()}",
                 type="primary" if day == selected_day else "secondary",
+                disabled=pending_meal is not None,
                 use_container_width=True,
             ):
                 st.session_state["plan_date_widget"] = day
@@ -1062,64 +1246,191 @@ def render_plan_page(session, profiles):
 
     date_col, summary_col = st.columns([1, 3])
     with date_col:
-        selected_day = st.date_input("Planning date", key="plan_date_widget")
+        selected_day = st.date_input(
+            "Planning date",
+            key="plan_date_widget",
+            disabled=pending_meal is not None,
+        )
     with summary_col:
         st.markdown(f"### {selected_day.strftime('%A, %B %d')}")
-        st.caption("Select who is eating. Suggestions will honor the selected members' restrictions.")
 
-    member_col, meal_col = st.columns([1.05, 2.95])
-    participants = []
-    with member_col:
-        st.markdown("### Who's eating?")
-        st.caption("Choose members to apply their food needs.")
+    meal_type = st.session_state.get("plan_meal_slot", MEAL_SLOTS[0][0])
+    if meal_type not in {slot[0] for slot in MEAL_SLOTS}:
+        meal_type = MEAL_SLOTS[0][0]
+    meal_label = next(
+        label for slot_type, _, label in MEAL_SLOTS if slot_type == meal_type
+    )
+
+    discard_request = st.session_state.pop("discard_meal_switch", None)
+    if discard_request:
+        old_date = date.fromisoformat(discard_request["date"])
+        old_type = discard_request["meal_type"]
+        st.session_state.pop(_meal_state_key(old_date, old_type), None)
+        saved_participants = _load_meal_participants(
+            session, old_date, old_type, profiles
+        )
         for profile in profiles:
-            with st.container(border=True):
-                avatar_col, name_col, check_col = st.columns([1, 2.3, 0.8])
-                with avatar_col:
-                    _avatar(profile, width=44)
-                with name_col:
-                    st.markdown(f"**{profile.name}**")
-                    restrictions = parse_list_field(profile.allergies) + parse_list_field(profile.intolerances)
-                    st.caption(", ".join(restrictions) if restrictions else "No restrictions")
-                with check_col:
-                    key = f"plan_member_{profile.id}"
-                    if key not in st.session_state:
-                        st.session_state[key] = True
-                    included = st.checkbox(
-                        "Included",
-                        key=key,
-                        label_visibility="collapsed",
-                    )
-                if included:
-                    participants.append(profile)
+            st.session_state[
+                _meal_participant_key(old_date, old_type, profile.id)
+            ] = profile.id in saved_participants
+        st.session_state["plan_meal_slot"] = discard_request["target"]
+        st.session_state.pop("pending_meal_slot", None)
+        st.rerun()
 
-    with meal_col:
-        st.markdown("### Plan meals")
-        if not participants:
-            st.warning("Choose at least one member to get safe, relevant meal suggestions.")
-            return
+    save_notice = st.session_state.pop("meal_switch_save_notice", None)
+    if save_notice:
+        st.success(save_notice)
 
-        ingredients = session.query(Ingredient).order_by(Ingredient.common_name).all()
-        if not ingredients:
-            st.info("Add ingredients in Food library before generating meal suggestions.")
-            return
+    st.markdown("### Plan meal")
+    pending_meal = st.session_state.get("pending_meal_slot")
+    meal_columns = st.columns(len(MEAL_SLOTS))
+    for column, slot in zip(meal_columns, MEAL_SLOTS):
+        slot_type, icon, label = slot
+        with column:
+            if st.button(
+                f"{icon} {label}",
+                key=f"select_meal_{slot_type}",
+                type="primary" if slot_type == meal_type else "secondary",
+                disabled=pending_meal is not None or slot_type == meal_type,
+                use_container_width=True,
+            ):
+                if _meal_has_unsaved_changes(
+                    session, selected_day, meal_type, profiles
+                ):
+                    st.session_state["pending_meal_slot"] = slot_type
+                else:
+                    st.session_state["plan_meal_slot"] = slot_type
+                st.rerun()
 
-        primary = participants[0]
-        for row in range(2):
-            meal_cols = st.columns(2)
-            for column, slot in zip(meal_cols, MEAL_SLOTS[row * 2 : row * 2 + 2]):
-                meal_type, icon, label = slot
-                with column:
-                    _render_meal_slot(
-                        session,
-                        primary,
-                        participants,
-                        ingredients,
-                        selected_day,
-                        meal_type,
-                        icon,
-                        label,
-                    )
+    if pending_meal is not None:
+        current_label = meal_label
+        target_label = next(
+            label for slot_type, _, label in MEAL_SLOTS if slot_type == pending_meal
+        )
+        st.warning(
+            f"Save {current_label} and its “Who's eating?” settings before switching to "
+            f"{target_label}?"
+        )
+        save_col, discard_col, stay_col = st.columns(3)
+        with save_col:
+            save_clicked = st.button(
+                "Save meal & who's eating",
+                key="save_before_meal_switch",
+                type="primary",
+                use_container_width=True,
+            )
+        with discard_col:
+            discard_clicked = st.button(
+                "Discard changes",
+                key="discard_before_meal_switch",
+                use_container_width=True,
+            )
+        with stay_col:
+            stay_clicked = st.button(
+                "Stay on this meal",
+                key="stay_on_current_meal",
+                use_container_width=True,
+            )
+
+        if save_clicked:
+            participants_to_save = [
+                profile
+                for profile in profiles
+                if st.session_state.get(
+                    _meal_participant_key(selected_day, meal_type, profile.id),
+                    False,
+                )
+            ]
+            items_to_save = st.session_state.get(
+                _meal_state_key(selected_day, meal_type),
+                _load_meal_draft(session, selected_day, meal_type),
+            )
+            _save_meal(
+                session,
+                participants_to_save[0] if participants_to_save else profiles[0],
+                participants_to_save,
+                selected_day,
+                meal_type,
+                items_to_save,
+            )
+            st.session_state["plan_meal_slot"] = pending_meal
+            st.session_state.pop("pending_meal_slot", None)
+            st.session_state["meal_switch_save_notice"] = (
+                f"{current_label} and its eater settings were saved."
+            )
+            st.rerun()
+        if discard_clicked:
+            st.session_state["discard_meal_switch"] = {
+                "date": selected_day.isoformat(),
+                "meal_type": meal_type,
+                "target": pending_meal,
+            }
+            st.rerun()
+        if stay_clicked:
+            st.session_state.pop("pending_meal_slot", None)
+            st.rerun()
+
+    saved_participants = _load_meal_participants(
+        session, selected_day, meal_type, profiles
+    )
+    for profile in profiles:
+        key = _meal_participant_key(selected_day, meal_type, profile.id)
+        if key not in st.session_state:
+            st.session_state[key] = profile.id in saved_participants
+    participants = [
+        profile
+        for profile in profiles
+        if st.session_state[
+            _meal_participant_key(selected_day, meal_type, profile.id)
+        ]
+    ]
+    st.caption(f"{len(participants)} of {len(profiles)} profiles selected for {meal_label}")
+    with st.expander("Who's eating?", expanded=False):
+        st.caption("Choose members for this meal. Their restrictions guide suggestions.")
+        st.caption("Scroll within the list to see more profiles.")
+        with st.container(height=330, border=True, key="plan-eater-grid"):
+            for start in range(0, len(profiles), 4):
+                profile_batch = profiles[start : start + 4]
+                member_columns = st.columns(len(profile_batch), gap="small")
+                for column, profile in zip(member_columns, profile_batch):
+                    with column:
+                        restrictions = (
+                            parse_list_field(profile.allergies)
+                            + parse_list_field(profile.intolerances)
+                        )
+                        with st.container(border=True):
+                            st.markdown(f"**{escape(profile.name)}**")
+                            st.caption(
+                                ", ".join(restrictions)
+                                if restrictions
+                                else "No restrictions"
+                            )
+                            st.checkbox(
+                                "Include",
+                                key=_meal_participant_key(
+                                    selected_day, meal_type, profile.id
+                                ),
+                            )
+
+    if not participants:
+        st.warning("Choose at least one member to get safe, relevant meal suggestions.")
+        return
+
+    ingredients = session.query(Ingredient).order_by(Ingredient.common_name).all()
+    if not ingredients:
+        st.info("Add ingredients in Food library before generating meal suggestions.")
+        return
+
+    primary = participants[0]
+    selected_slot = next(slot for slot in MEAL_SLOTS if slot[0] == meal_type)
+    _render_meal_slot(
+        session,
+        primary,
+        participants,
+        ingredients,
+        selected_day,
+        *selected_slot,
+    )
 
 
 def render_food_library(session):
@@ -1197,93 +1508,24 @@ def render_insights_page(session, profiles):
     _render_page_header(
         "Nutrition and activity",
         "Insights",
-        "Review estimated nutrition targets and the activity your household has logged.",
+        "Review estimated nutritional needs and the activity your household has logged.",
     )
     if not profiles:
         st.info("Add a household member to see personalized insights.")
         return
-    profile = _render_member_cards(profiles, "insights_member_id")
+    profile = _selected_profile(profiles, "insights_member_id")
     activities = (
         session.query(ActivityRecord)
         .filter(ActivityRecord.profile_id == profile.id)
         .all()
     )
     requirements = calculate_daily_requirements(profile, activities)
-    columns = st.columns(4)
-    columns[0].metric("Energy estimate", f"{requirements['energy_kcal']} kcal")
-    columns[1].metric("Protein", f"{requirements['protein_g']} g")
-    columns[2].metric("Fiber", f"{requirements['fiber_g']} g")
-    columns[3].metric("Hydration", f"{requirements['hydration_liters']} L")
-    st.info(
-        "These are estimated daily nutrition targets based on the member's profile. "
-        "They are not intake or progress measurements—the app does not yet record "
-        "food actually eaten."
+    _render_member_cards(
+        profiles,
+        "insights_member_id",
+        requirements=requirements,
+        activities=activities,
     )
-
-    details_col, activity_col = st.columns(2)
-    with details_col:
-        st.subheader("Estimated daily targets")
-        st.caption("Use these as general planning references, not medical prescriptions.")
-        rows = list_requirement_rows(profile, activities)
-        targets = pd.DataFrame(
-            [
-                {
-                    "Nutrient": row["metric"],
-                    "Estimated target": f"{row['value']} {row['unit']}",
-                }
-                for row in rows
-            ]
-        )
-        st.dataframe(targets, use_container_width=True, hide_index=True)
-        with st.expander("View all values and assumptions"):
-            st.write(requirements["method"])
-            st.write(requirements["reference_source"])
-            for note in requirements["notes"]:
-                st.write(f"• {note}")
-    with activity_col:
-        st.subheader("Exercise logged this week")
-        week_start = date.today() - timedelta(days=6)
-        week_records = [
-            record
-            for record in activities
-            if week_start <= record.date <= date.today()
-        ]
-        totals_by_day = {week_start + timedelta(days=offset): 0.0 for offset in range(7)}
-        for record in week_records:
-            totals_by_day[record.date] += record.duration_minutes
-        activity_chart = pd.DataFrame(
-            [
-                {"Day": day.strftime("%a"), "Minutes": minutes}
-                for day, minutes in totals_by_day.items()
-            ]
-        )
-        st.bar_chart(activity_chart.set_index("Day")["Minutes"])
-        st.caption("Minutes come from activity logs; blank days mean no activity was recorded.")
-        recent = (
-            session.query(ActivityRecord)
-            .filter(ActivityRecord.profile_id == profile.id)
-            .order_by(ActivityRecord.date.desc())
-            .limit(8)
-            .all()
-        )
-        if recent:
-            st.dataframe(
-                pd.DataFrame(
-                    [
-                        {
-                            "Date": record.date.isoformat(),
-                            "Activity": record.sport_type,
-                            "Minutes": record.duration_minutes,
-                            "Intensity": record.intensity,
-                        }
-                        for record in recent
-                    ]
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
-        else:
-            st.info("Log exercise from this member's Exercise workspace.")
 
 
 def main():
